@@ -1,0 +1,20 @@
+[project]
+name = "kimi-vendor-verifier"
+version = "0.1.0"
+description = "Kimi Vendor Verifier"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx[http2]>=0.28.1",
+    "inspect-ai>=0.3.158",
+    "inspect-evals>=0.3.103",
+    "loguru>=0.7.3",
+    "math-verify>=0.8.0",
+    "openai>=2.14.0",
+]
+
+[tool.setuptools]
+py-modules = ["kimi_model", "aime2025", "mmmu_pro_vision", "ocr_bench", "eval", "load_aime_questions"]
+
+[project.entry-points.inspect_ai]
+kimi_vendor_verifier = "kimi_model"
