@@ -50,6 +50,8 @@ def run_eval(
     think_mode: str,
     client_timeout: int,
     stream: bool = False,
+    temperature: float | None = None,
+    top_p: float | None = None,
     **overrides,
 ):
     """Run a single benchmark evaluation."""
@@ -65,6 +67,7 @@ def run_eval(
     print(f"Running: {bench_name} | thinking={thinking} | mode={think_mode}")
     print(f"Model: {model}")
     print(f"max_tokens={max_tokens}, max_connections={max_connections}, epochs={epochs}")
+    print(f"temperature={temperature}, top_p={top_p}")
     print(f"stream={stream}, extra_body={extra_body}")
     print(f"{'='*60}\n")
 
@@ -78,6 +81,8 @@ def run_eval(
         retry_on_error=3,
         continue_on_error=True,
         fail_on_error=True,
+        temperature=temperature,
+        top_p=top_p,
         model_args={
             "stream": stream,
             "max_retries": 0,
@@ -141,6 +146,16 @@ def main():
         action="store_true",
         help="Enable streaming (keeps connection alive for long inference)",
     )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        help="Sampling temperature (default: 1.0 for thinking, 0.6 for non-thinking)",
+    )
+    parser.add_argument(
+        "--top-p",
+        type=float,
+        help="Top-p sampling (default: 0.95)",
+    )
 
     args = parser.parse_args()
 
@@ -158,6 +173,8 @@ def main():
         args.think_mode,
         args.client_timeout,
         args.stream,
+        args.temperature,
+        args.top_p,
         **overrides,
     )
 

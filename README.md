@@ -14,14 +14,14 @@ A model evaluation tool based on [inspect-ai](https://github.com/UKGovernmentBEI
 
 ### Required Parameters
 
-| Benchmark | Mode | Max Tokens | Epochs |
-|-----------|------|------------|--------|
-| OCRBench | Non-Thinking | 8192 | 1 |
-| OCRBench | Thinking | 16384 | 1 |
-| MMMU | Non-Thinking | 16384 | 1 |
-| MMMU | Thinking | 65536 | 1 |
-| AIME 2025 | Non-Thinking | 16384 | 32 |
-| AIME 2025 | Thinking | 98304 | 32 |
+| Benchmark | Mode | Temperature | TopP | Max Tokens | Epochs |
+|-----------|------|-------------|------|------------|--------|
+| OCRBench | Non-Thinking | 0.6 | 0.95 | 8192 | 1 |
+| OCRBench | Thinking | 1.0 | 0.95 | 16384 | 1 |
+| MMMU | Non-Thinking | 0.6 | 0.95 | 16384 | 1 |
+| MMMU | Thinking | 1.0 | 0.95 | 65536 | 1 |
+| AIME 2025 | Non-Thinking | 0.6 | 0.95 | 16384 | 32 |
+| AIME 2025 | Thinking | 1.0 | 0.95 | 98304 | 32 |
 
 ## Setup
 
@@ -117,6 +117,8 @@ uv run python eval.py aime2025 --model kimi/your-model-id \
 | `--max-tokens` | Max output tokens (see Required Parameters) | **Required** |
 | `--thinking` | Enable thinking mode (requires `--think-mode kimi/opensource`) | Off |
 | `--think-mode` | Thinking param format: `kimi` or `opensource` (vLLM/SGLang/KTransformers) | `kimi` |
+| `--temperature` | Sampling temperature | thinking: 1.0, non-thinking: 0.6 |
+| `--top-p` | Top-p sampling | `0.95` |
 | `--stream` | Enable streaming (recommended for long inference) | Off |
 | `--max-connections` | Max concurrent connections | Per benchmark |
 | `--epochs` | Number of sampling epochs | Per benchmark |

@@ -14,14 +14,14 @@
 
 ### 评测参数要求
 
-| Benchmark | 模式 | Max Tokens | Epochs |
-|-----------|------|------------|--------|
-| OCRBench | Non-Thinking | 8192 | 1 |
-| OCRBench | Thinking | 16384 | 1 |
-| MMMU | Non-Thinking | 16384 | 1 |
-| MMMU | Thinking | 65536 | 1 |
-| AIME 2025 | Non-Thinking | 16384 | 32 |
-| AIME 2025 | Thinking | 98304 | 32 |
+| Benchmark | 模式 | Temperature | TopP | Max Tokens | Epochs |
+|-----------|------|-------------|------|------------|--------|
+| OCRBench | Non-Thinking | 0.6 | 0.95 | 8192 | 1 |
+| OCRBench | Thinking | 1.0 | 0.95 | 16384 | 1 |
+| MMMU | Non-Thinking | 0.6 | 0.95 | 16384 | 1 |
+| MMMU | Thinking | 1.0 | 0.95 | 65536 | 1 |
+| AIME 2025 | Non-Thinking | 0.6 | 0.95 | 16384 | 32 |
+| AIME 2025 | Thinking | 1.0 | 0.95 | 98304 | 32 |
 
 ## 环境准备
 
@@ -117,6 +117,8 @@ uv run python eval.py aime2025 --model kimi/your-model-id \
 | `--max-tokens` | 最大输出 token 数（见评测参数要求） | **必填** |
 | `--thinking` | 开启思考模式（需配合 `--think-mode kimi/opensource`） | 关闭 |
 | `--think-mode` | 思考参数格式：`kimi` 或 `opensource`（vLLM/SGLang/KTransformers） | `kimi` |
+| `--temperature` | 采样温度 | thinking: 1.0, non-thinking: 0.6 |
+| `--top-p` | Top-p 采样 | `0.95` |
 | `--stream` | 启用流式传输（推荐，避免长推理超时） | 关闭 |
 | `--max-connections` | 最大并发连接数 | 按 benchmark |
 | `--epochs` | 采样次数 | 按 benchmark |
