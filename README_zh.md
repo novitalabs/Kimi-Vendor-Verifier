@@ -1,4 +1,4 @@
-# [Kimi Vendor Verifier](https://www.kimi.com/blogs/kimi-vendor-verifier.html)
+# [Kimi Vendor Verifier](https://www.kimi.com/blog/kimi-vendor-verifier.html)
 
 [English](README.md) | 中文
 
