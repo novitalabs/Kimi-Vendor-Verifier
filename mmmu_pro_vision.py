@@ -36,12 +36,7 @@ MMMU_PRO_10c_PROMPT = (
 def _image_to_base64(img) -> Optional[str]:
     if hasattr(img, "convert"):
         buffered = BytesIO()
-        if img.mode == "P":
-            if "transparency" in img.info:
-                img = img.convert("RGBA")
-            else:
-                img = img.convert("RGB")
-        if img.mode == "RGBA":
+        if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         img.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode()
@@ -121,24 +116,17 @@ def load_mmmu_pro_dataset(
 
 def parse_multi_choice_response(
     response: str, all_choices: list[str], index2ans: dict[str, str]
-) -> str:
+    ) -> str:
     """Parse the prediction from the generated response. Return the predicted index (A, B, C, D, etc.)."""
     if not all_choices:
         raise ValueError("all_choices is empty — dataset error")
 
-    choices_pattern = "|".join(re.escape(c) for c in all_choices)
-
     last_answer_pos = response.rfind("Answer:")
     if last_answer_pos != -1:
         answer_str = response[last_answer_pos + len("Answer:") :].strip()
-        match = re.match(
-            rf"^[\s\*\$\(\[\:]*({choices_pattern})[\s\*\$\)\]\.\,\:]*",
-            answer_str,
-            re.IGNORECASE,
-        )
-        if match:
-            return match.group(1).upper()
-
+        matching_options = [option for option in all_choices if option in answer_str]
+        if len(matching_options) == 1:
+            return matching_options[0]
     for char in [",", ".", "!", "?", ";", ":", "'"]:
         response = response.strip(char)
     response = " " + response + " "

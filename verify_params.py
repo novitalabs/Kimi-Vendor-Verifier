@@ -61,7 +61,6 @@ def make_request(
     kwargs = {
         "model": model,
         "messages": [{"role": "user", "content": "Say 'OK' and nothing else."}],
-        "max_tokens": 100,
         "extra_body": get_thinking_extra_body(thinking, think_mode),
     }
     if extra_params:
