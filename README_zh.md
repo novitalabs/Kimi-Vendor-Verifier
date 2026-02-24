@@ -210,3 +210,7 @@ uv run python eval.py aime2025 --model kimi/your-model-id \
 ## 联系我们
 
 如果您有任何问题或建议，请联系 contact-kvv@kimi.com。
+
+## 许可证
+
+本项目采用 MIT License，详见 [LICENSE](LICENSE)。

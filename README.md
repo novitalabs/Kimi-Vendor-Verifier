@@ -210,3 +210,7 @@ The following network errors are **automatically retried** (exponential backoff,
 ## Contact Us
 
 If you have any questions or suggestions, please contact contact-kvv@kimi.com.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
