@@ -12,7 +12,7 @@ Immutable parameters (must use default values):
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -24,15 +24,16 @@ class ParamSpec:
     name: str
     think_default: Any
     non_think_default: Any
-    wrong_value: Any
+    wrong_values: list[Any]
+    extra_accepted_values: list[Any] = field(default_factory=list)
 
 
 IMMUTABLE_PARAMS: list[ParamSpec] = [
-    ParamSpec("temperature", 1.0, 0.6, 0.5),
-    ParamSpec("top_p", 0.95, 0.95, 0.8),
-    ParamSpec("presence_penalty", 0, 0, 0.5),
-    ParamSpec("frequency_penalty", 0, 0, 0.5),
-    ParamSpec("n", 1, 1, 2),
+    ParamSpec("temperature", 1.0, 0.6, [-0.1, 1.1], [0.5]),
+    ParamSpec("top_p", 0.95, 0.95, [0.8]),
+    ParamSpec("presence_penalty", 0, 0, [0.5]),
+    ParamSpec("frequency_penalty", 0, 0, [0.5]),
+    ParamSpec("n", 1, 1, [2]),
 ]
 
 
@@ -82,16 +83,20 @@ def test_param_rejected(
     thinking: bool,
     param: ParamSpec,
     think_mode: str = "kimi",
-) -> tuple[bool, str]:
-    """Test that wrong param value is rejected."""
+) -> list[tuple[bool, str]]:
+    """Test that wrong param values are rejected. Returns one result per wrong value."""
     default_value = param.think_default if thinking else param.non_think_default
-    if param.wrong_value == default_value:
-        return True, "Skip: wrong_value == default_value"
-
-    success, _ = make_request(client, model, thinking, think_mode, {param.name: param.wrong_value})
-    if success:
-        return False, f"❌ FAIL: {param.name}={param.wrong_value} should be rejected"
-    return True, f"✓ PASS: {param.name}={param.wrong_value} correctly rejected"
+    results = []
+    for wrong_value in param.wrong_values:
+        if wrong_value == default_value:
+            results.append((True, f"Skip: {param.name}={wrong_value} == default_value"))
+            continue
+        success, _ = make_request(client, model, thinking, think_mode, {param.name: wrong_value})
+        if success:
+            results.append((False, f"❌ FAIL: {param.name}={wrong_value} should be rejected"))
+        else:
+            results.append((True, f"✓ PASS: {param.name}={wrong_value} correctly rejected"))
+    return results
 
 
 def test_param_accepted(
@@ -100,13 +105,18 @@ def test_param_accepted(
     thinking: bool,
     param: ParamSpec,
     think_mode: str = "kimi",
-) -> tuple[bool, str]:
-    """Test that correct param value is accepted."""
+) -> list[tuple[bool, str]]:
+    """Test that correct param values are accepted. Returns one result per accepted value."""
     default_value = param.think_default if thinking else param.non_think_default
-    success, msg = make_request(client, model, thinking, think_mode, {param.name: default_value})
-    if success:
-        return True, f"✓ PASS: {param.name}={default_value} accepted"
-    return False, f"❌ FAIL: {param.name}={default_value} rejected: {msg}"
+    values = [default_value, *param.extra_accepted_values]
+    results = []
+    for value in values:
+        success, msg = make_request(client, model, thinking, think_mode, {param.name: value})
+        if success:
+            results.append((True, f"✓ PASS: {param.name}={value} accepted"))
+        else:
+            results.append((False, f"❌ FAIL: {param.name}={value} rejected: {msg}"))
+    return results
 
 
 def test_no_param(
@@ -156,21 +166,21 @@ def run_verification(
     if test_accept:
         print("\n[2] Test correct default values...")
         for param in IMMUTABLE_PARAMS:
-            passed, msg = test_param_accepted(client, model, thinking, param, think_mode)
-            results.append(passed)
-            if not passed:
-                all_passed = False
-            print(f"    {msg}")
+            for passed, msg in test_param_accepted(client, model, thinking, param, think_mode):
+                results.append(passed)
+                if not passed:
+                    all_passed = False
+                print(f"    {msg}")
 
     # Test 3: wrong values rejected
     if test_reject:
         print("\n[3] Test wrong values (should be rejected)...")
         for param in IMMUTABLE_PARAMS:
-            passed, msg = test_param_rejected(client, model, thinking, param, think_mode)
-            results.append(passed)
-            if not passed:
-                all_passed = False
-            print(f"    {msg}")
+            for passed, msg in test_param_rejected(client, model, thinking, param, think_mode):
+                results.append(passed)
+                if not passed:
+                    all_passed = False
+                print(f"    {msg}")
 
     # Summary
     print(f"\n{'='*60}")
