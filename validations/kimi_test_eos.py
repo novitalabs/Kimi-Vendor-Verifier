@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--req", default=os.path.join(os.path.dirname(__file__), "req.json"))
     parser.add_argument("--api-url", required=True, help="API base URL, e.g. http://host:8000")
     parser.add_argument("--api-key", default=None, help="API key for Authorization header")
+    parser.add_argument("--extra-headers", type=str, default=None, help='Extra HTTP headers as a JSON object')
     parser.add_argument("--model", default="moonshotai/Kimi-K2.5", help="Model name")
     parser.add_argument("--total", type=int, default=3000)
     parser.add_argument("--concurrency", type=int, default=32)
@@ -50,6 +51,19 @@ def main():
     headers = {"Content-Type": "application/json"}
     if args.api_key:
         headers["Authorization"] = f"Bearer {args.api_key}"
+    if args.extra_headers:
+        try:
+            extra_headers = json.loads(args.extra_headers)
+        except json.JSONDecodeError as e:
+            print(f"Error: failed to parse --extra-headers JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(extra_headers, dict) or not all(
+            isinstance(k, str) and isinstance(v, str)
+            for k, v in extra_headers.items()
+        ):
+            print("Error: --extra-headers must be a JSON object with string keys and string values", file=sys.stderr)
+            sys.exit(1)
+        headers.update(extra_headers)
 
     stats_lock = Lock()
     stats = {

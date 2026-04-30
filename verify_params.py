@@ -10,6 +10,7 @@ Immutable parameters (must use default values):
 """
 
 import argparse
+import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -37,12 +38,19 @@ IMMUTABLE_PARAMS: list[ParamSpec] = [
 ]
 
 
-def get_client(base_url: str, api_key: str) -> OpenAI:
-    return OpenAI(
-        base_url=base_url,
-        api_key=api_key,
-        http_client=httpx.Client(timeout=60.0),
-    )
+def get_client(
+    base_url: str,
+    api_key: str,
+    extra_headers: dict[str, str] | None = None,
+) -> OpenAI:
+    kwargs = {
+        "base_url": base_url,
+        "api_key": api_key,
+        "http_client": httpx.Client(timeout=60.0),
+    }
+    if extra_headers:
+        kwargs["default_headers"] = extra_headers
+    return OpenAI(**kwargs)
 
 
 def get_thinking_extra_body(thinking: bool, think_mode: str) -> dict:
@@ -137,12 +145,13 @@ def run_verification(
     api_key: str,
     model: str,
     thinking: bool,
+    extra_headers: dict[str, str] | None = None,
     think_mode: str = "kimi",
     test_reject: bool = True,
     test_accept: bool = True,
 ) -> bool:
     """Run full verification. Returns True if all tests pass."""
-    client = get_client(base_url, api_key)
+    client = get_client(base_url, api_key, extra_headers)
     mode_str = "think" if thinking else "non-think"
 
     print(f"\n{'='*60}")
@@ -214,6 +223,12 @@ Examples:
         default=os.environ.get("KIMI_API_KEY"),
         help="API key (default: $KIMI_API_KEY)",
     )
+    parser.add_argument(
+        "--extra-headers",
+        type=str,
+        default=None,
+        help='Extra HTTP headers as a JSON object.',
+    )
     parser.add_argument("--thinking", action="store_true", help="Verify thinking mode")
     parser.add_argument(
         "--think-mode",
@@ -231,6 +246,20 @@ Examples:
         print("Error: Set KIMI_API_KEY env var or use --api-key")
         sys.exit(1)
 
+    extra_headers = {}
+    if args.extra_headers:
+        try:
+            extra_headers = json.loads(args.extra_headers)
+        except json.JSONDecodeError as e:
+            print(f"Error: failed to parse --extra-headers JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(extra_headers, dict) or not all(
+            isinstance(k, str) and isinstance(v, str)
+            for k, v in extra_headers.items()
+        ):
+            print("Error: --extra-headers must be a JSON object with string keys and string values", file=sys.stderr)
+            sys.exit(1)
+
     test_reject = not args.only_accept
     test_accept = not args.only_reject
     modes = [False, True] if args.all else [args.thinking]
@@ -242,6 +271,7 @@ Examples:
             args.api_key,
             args.model,
             thinking,
+            extra_headers=extra_headers,
             think_mode=args.think_mode,
             test_reject=test_reject,
             test_accept=test_accept,
