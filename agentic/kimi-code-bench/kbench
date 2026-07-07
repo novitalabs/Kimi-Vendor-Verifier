@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Kimi Code Bench — entry point.
+
+Subcommands:
+    init        -- interactive setup: write ~/.kbench.json + test SSH + endpoint
+    doctor      -- audit local + remote + preset config (pre-flight check)
+    install     -- verify local prerequisites (ssh / python3)
+    probe       -- query endpoint capabilities only (no smoke)
+    run         -- full bench: probe + setup + smoke + triage + archive
+    tail        -- follow a detached run's remote setup.log
+    fetch       -- wait for a detached run, then archive + triage
+    triage      -- re-triage an existing run directory
+    compare     -- diff two run directories side-by-side
+
+Recommended flow for a new user:
+    1. ./kbench init         # once
+    2. ./kbench doctor       # verify config
+    3. ./kbench run --preset kimi-k2.6 --track official --tag k26-off-$(date +%F) --detach
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "src"))
+
+
+def _parse_headers(raw: list[str]) -> dict[str, str]:
+    """Parse repeated --header KEY:VALUE into a dict. KEY:VALUE only; ':' may
+    appear in VALUE (e.g. URLs). Empty / malformed entries raise SystemExit."""
+    out: dict[str, str] = {}
+    for entry in raw or []:
+        if ":" not in entry:
+            sys.exit(f"--header {entry!r}: must be KEY:VALUE")
+        k, v = entry.split(":", 1)
+        k = k.strip(); v = v.lstrip()
+        if not k:
+            sys.exit(f"--header {entry!r}: empty key")
+        out[k] = v
+    return out
+
+
+def _merged_headers(args) -> dict[str, str]:
+    """--header (repeated) merged with --infer-id back-compat shortcut."""
+    h = _parse_headers(getattr(args, "header", None) or [])
+    if getattr(args, "infer_id", "") and "X-Infer-ID" not in h:
+        h["X-Infer-ID"] = args.infer_id
+    return h
+
+
+def _apply_preset(args) -> None:
+    """If --preset is given, resolve into base_url/api_key/model/headers/preserve_thinking
+    and inject into args, letting CLI overrides win.
+
+    Precedence for each field:
+        CLI --base-url/--api-key/--model/--header/--preserve-thinking (if set) >
+        preset+track resolution
+
+    Also handles --self-* CLI flags for the self track.
+    """
+    from preset import load_preset, resolve_preset_track
+
+    if not getattr(args, "preset", None):
+        return
+
+    preset = load_preset(args.preset)
+    track = getattr(args, "track", "official")
+    resolved = resolve_preset_track(
+        preset, track,
+        self_url=getattr(args, "self_url", "") or "",
+        self_key=getattr(args, "self_key", "") or "",
+        self_headers=getattr(args, "self_header", None) or [],
+        self_model=getattr(args, "self_model", "") or "",
+    )
+
+    # CLI wins over preset for each field
+    if not getattr(args, "base_url", "") or args.base_url is None or args.base_url == "":
+        args.base_url = resolved["base_url"]
+    if not getattr(args, "api_key", "") or args.api_key is None or args.api_key == "":
+        args.api_key = resolved["api_key"]
+    if getattr(args, "model", "kimi-k26") == "kimi-k26":
+        # kimi-k26 is the argparse default; treat as unset
+        args.model = resolved["model"]
+    # merge headers: preset first, CLI --header wins per key
+    cli_headers = list(getattr(args, "header", None) or [])
+    preset_headers = [f"{k}:{v}" for k, v in resolved["headers"].items()]
+    # CLI overrides preset per key
+    seen = set()
+    for h in cli_headers:
+        if ":" in h:
+            seen.add(h.split(":", 1)[0].strip())
+    merged = cli_headers + [h for h in preset_headers if h.split(":", 1)[0].strip() not in seen]
+    args.header = merged
+    # preserve_thinking: only override if user didn't explicitly set 0/1
+    # argparse default is 0; we can't distinguish "unset" from "explicit 0",
+    # but preset says what's right for this model, so honor preset unless
+    # CLI has explicit --preserve-thinking flag (we detect via sys.argv).
+    import sys as _sys
+    argv_has_pt = any(a.startswith("--preserve-thinking") for a in _sys.argv)
+    if not argv_has_pt:
+        args.preserve_thinking = resolved["preserve_thinking"]
+
+
+def cmd_install(args):
+    from runner import check_local_prereqs
+    return check_local_prereqs()
+
+
+def cmd_init(args):
+    from setup_cli import cmd_init as _init
+    return _init(args)
+
+
+def cmd_doctor(args):
+    from setup_cli import cmd_doctor as _doctor
+    return _doctor(args)
+
+
+def cmd_probe(args):
+    from probe import probe_endpoint, probe_extended
+    _apply_preset(args)
+    if not args.base_url:
+        sys.exit("[kbench] probe requires --base-url or --preset")
+    if not args.api_key:
+        sys.exit("[kbench] probe requires --api-key or --preset (with api_key ref resolving to a value)")
+    extra = _merged_headers(args)
+    spec_result = probe_endpoint(args.base_url, args.api_key, args.infer_id, args.model, extra)
+    print(spec_result.format())
+    if args.extended:
+        print()
+        ext = probe_extended(args.base_url, args.api_key, args.infer_id, args.model, extra)
+        print(ext.format())
+        return 0 if spec_result.passed and ext.passed else 1
+    return 0 if spec_result.passed else 1
+
+
+def cmd_run(args):
+    from runner import run_bench
+    _apply_preset(args)
+    if not args.base_url:
+        sys.exit("[kbench] run requires --base-url or --preset")
+    return run_bench(args)
+
+
+def cmd_tail(args):
+    from runner import tail_run
+    return tail_run(args)
+
+
+def cmd_fetch(args):
+    from runner import fetch_run
+    return fetch_run(args)
+
+
+def cmd_triage(args):
+    from triage.triage_all import main as triage_main
+    return triage_main(args.run_dir)
+
+
+def cmd_compare(args):
+    from compare.compare_runs import compare
+    return compare(args.run_a, args.run_b)
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="kbench",
+        description="Kimi Code Bench — agentic smoke for self-deployed Kimi / vLLM endpoints",
+    )
+    sub = p.add_subparsers(dest="cmd", required=False)
+
+    # install
+    p_install = sub.add_parser("install", help="Check local prerequisites")
+    p_install.set_defaults(func=cmd_install)
+
+    # init
+    p_init = sub.add_parser("init",
+                            help="Interactive setup: write ~/.kbench.json + test SSH + test API endpoint")
+    p_init.set_defaults(func=cmd_init)
+
+    # doctor
+    p_doctor = sub.add_parser("doctor",
+                              help="Audit local + remote + preset config, print pass/fail lines")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    # probe
+    p_probe = sub.add_parser("probe", help="Probe endpoint capabilities")
+    p_probe.add_argument("--preset", default=None,
+                         help="Model preset name (see presets/*.json). "
+                              "When set, fills base-url/api-key/model/header/preserve-thinking "
+                              "from preset+track. CLI overrides preset per field.")
+    p_probe.add_argument("--track", default="official", choices=["official", "self"],
+                         help="Which track from the preset (default: official)")
+    p_probe.add_argument("--self-url", default="", help="Self track: vLLM base URL")
+    p_probe.add_argument("--self-key", default="", help="Self track: API key or $ENV_VAR ref")
+    p_probe.add_argument("--self-header", action="append", default=[],
+                         help="Self track: extra header KEY:VALUE (repeatable)")
+    p_probe.add_argument("--self-model", default="", help="Self track: model id exposed by your vLLM")
+    p_probe.add_argument("--base-url", default="", help="OpenAI-compatible base URL, e.g. http://host:port/v1 (or use --preset)")
+    p_probe.add_argument("--api-key", default="", help="Bearer token (or use --preset)")
+    p_probe.add_argument("--infer-id", default="", help="Convenience for --header X-Infer-ID:<value>")
+    p_probe.add_argument("--header", action="append", default=[],
+                       help="Extra HTTP header KEY:VALUE (repeatable). "
+                            "Example: --header X-Fusion-Provider:moonshot-openai")
+    p_probe.add_argument("--model", default="kimi-k26", help="Model id to use in probe requests (or use --preset)")
+    p_probe.add_argument("--extended", action="store_true",
+                       help="Also run extended wire-conformance probes (streaming, "
+                            "tool_call round-trip, max_tokens truncation, reasoning "
+                            "emission, prompt caching, long prompt)")
+    p_probe.set_defaults(func=cmd_probe)
+
+    # run
+    p_run = sub.add_parser("run", help="Full bench run")
+    p_run.add_argument("--preset", default=None,
+                       help="Model preset name (see presets/*.json). "
+                            "Auto-fills base-url/api-key/model/header/preserve-thinking. "
+                            "CLI overrides preset per field.")
+    p_run.add_argument("--track", default="official", choices=["official", "self"],
+                       help="Which track from the preset (default: official)")
+    p_run.add_argument("--self-url", default="", help="Self track: vLLM base URL")
+    p_run.add_argument("--self-key", default="", help="Self track: API key or $ENV_VAR ref")
+    p_run.add_argument("--self-header", action="append", default=[],
+                       help="Self track: extra header KEY:VALUE (repeatable)")
+    p_run.add_argument("--self-model", default="", help="Self track: model id exposed by your vLLM")
+    p_run.add_argument("--base-url", default="", help="OpenAI-compatible base URL (or use --preset)")
+    p_run.add_argument("--api-key", default="", help="Bearer token; leave empty when --oauth-creds is set")
+    p_run.add_argument("--model", default="kimi-k26")
+    p_run.add_argument("--infer-id", default="", help="Convenience for --header X-Infer-ID:<value>")
+    p_run.add_argument("--header", action="append", default=[],
+                       help="Extra HTTP header KEY:VALUE (repeatable). "
+                            "Example: --header X-Fusion-Provider:moonshot-openai")
+    p_run.add_argument("--tag", default=None, help="Run tag (auto-generated if absent)")
+    p_run.add_argument("--remote-host", default=None,
+                       help="Remote sandbox SSH spec, e.g. 'user@host' or 'local'. "
+                            "Default: built-in (see src/config.py DEFAULT_REMOTE).")
+    p_run.add_argument("--remote-port", type=int, default=None)
+    p_run.add_argument("--remote-workdir", default=None,
+                       help="Override remote workdir (default from ~/.kbench.json). "
+                            "Use per-run isolated dirs when running multiple smokes in "
+                            "parallel on the same host, e.g. /root/kbench/<tag>/")
+    p_run.add_argument("--tasks", default="smoke",
+                       help="'smoke' (15 default tasks), 'extended' (89 tasks), "
+                            "comma-separated subset, or path to a file with one task per line")
+    p_run.add_argument("--task-list", default=None,
+                       help="Path to a file containing one task name per line (overrides --tasks)")
+    p_run.add_argument("--preserve-thinking", type=int, choices=[0, 1], default=0,
+                       help="1 to send top-level thinking={type:enabled, keep:all}")
+    p_run.add_argument("--oauth-creds", default=None,
+                       help="Path to ~/.kimi-code/credentials/kimi-code.json. "
+                            "When set, kbench skips --api-key and lets the "
+                            "container's kimi-cli auto-refresh OAuth tokens. "
+                            "Required for runs against api.kimi.com/coding/v1 "
+                            "that exceed the 15-minute access-token lifetime.")
+    p_run.add_argument("--kimi-cli-ref", default=None,
+                       help="Override pinned kimi-cli commit")
+    p_run.add_argument("--skip-probe", action="store_true",
+                       help="Skip capability auto-detection")
+    p_run.add_argument("--validate-headers", action="store_true",
+                       help="Run 8 manual curl cases against spec before smoke")
+    p_run.add_argument("--concurrency", type=int, default=1,
+                       help="Number of tasks to run in parallel on the remote box. "
+                            "Default 1 (serial). Higher values reduce wall-clock "
+                            "linearly with vLLM throughput headroom; pre-pulls all "
+                            "task images sequentially before the parallel pool to "
+                            "avoid docker.io concurrent-pull failures.")
+    p_run.add_argument("--detach", action="store_true",
+                       help="Push artifacts + start remote nohup setid run, then exit. "
+                            "Use `kbench tail/fetch <tag>` to follow up.")
+    p_run.set_defaults(func=cmd_run)
+
+    # tail
+    p_tail = sub.add_parser("tail", help="Tail a detached run's remote setup.log")
+    p_tail.add_argument("tag", nargs="?", default=None,
+                        help="Tag (not currently used for routing — only one detached run at a time)")
+    p_tail.add_argument("--remote-host", default=None)
+    p_tail.add_argument("--remote-port", type=int, default=None)
+    p_tail.add_argument("--remote-workdir", default=None)
+    p_tail.add_argument("--lines", default=200, type=int, help="initial lines to show (default 200)")
+    p_tail.set_defaults(func=cmd_tail)
+
+    # fetch
+    p_fetch = sub.add_parser("fetch", help="Wait for a detached run to finish, then archive + triage")
+    p_fetch.add_argument("tag", help="Run tag the detach was launched under")
+    p_fetch.add_argument("--remote-host", default=None)
+    p_fetch.add_argument("--remote-port", type=int, default=None)
+    p_fetch.add_argument("--remote-workdir", default=None)
+    p_fetch.add_argument("--timeout", type=int, default=0,
+                         help="Max seconds to wait for completion; 0 = wait forever")
+    p_fetch.set_defaults(func=cmd_fetch)
+
+    # triage
+    p_tri = sub.add_parser("triage", help="Re-triage an existing run")
+    p_tri.add_argument("run_dir", help="Path to runs/<tag>/")
+    p_tri.set_defaults(func=cmd_triage)
+
+    # compare
+    p_cmp = sub.add_parser("compare", help="Diff two run directories")
+    p_cmp.add_argument("run_a")
+    p_cmp.add_argument("run_b")
+    p_cmp.set_defaults(func=cmd_compare)
+
+    return p
+
+
+HELP_HINT = """\
+Kimi Code Bench — agentic smoke test for Kimi / vLLM endpoints.
+
+🚀 New here? Run these 3 commands in order:
+
+    ./kbench init       Interactive setup: SSH + PPIO key + connectivity test
+    ./kbench doctor     Verify config (local + remote + presets)
+    ./kbench run --preset kimi-k2.6 --track official \\
+                 --tag k26-off-$(date +%Y%m%d) --detach
+
+Then:
+    ./kbench tail <tag>   # follow live setup.log
+    ./kbench fetch <tag>  # wait for done + archive + auto-triage
+
+Full walkthrough:  docs/quickstart.md
+Canonical results: docs/test-matrix.md + runs/baseline-*/README.md
+
+Try `./kbench <command> --help` for a specific subcommand.
+"""
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if not getattr(args, "cmd", None):
+        print(HELP_HINT)
+        sys.exit(0)
+    rc = args.func(args)
+    sys.exit(0 if rc is None else int(rc))
+
+
+if __name__ == "__main__":
+    main()

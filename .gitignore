@@ -18,3 +18,12 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# agentic/kimi-code-bench: run artifacts (large trial tarballs, per-run trials).
+# The runs/ dir itself is kept via .gitkeep. Canonical baselines under
+# runs/baseline-* are kept (they contain small TSV + README, no bulk data).
+agentic/kimi-code-bench/runs/*
+!agentic/kimi-code-bench/runs/.gitkeep
+!agentic/kimi-code-bench/runs/baseline-*/
+agentic/kimi-code-bench/runs/*/remote.tar.gz
+agentic/kimi-code-bench/runs/*/jobs/

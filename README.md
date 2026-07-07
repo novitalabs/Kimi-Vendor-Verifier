@@ -12,6 +12,24 @@ A model evaluation tool based on [inspect-ai](https://github.com/UKGovernmentBEI
 | **MMMU Pro Vision** | Multimodal understanding (vision, 10-way multiple choice) | [MMMU/MMMU_Pro](https://huggingface.co/datasets/MMMU/MMMU_Pro) |
 | **OCRBench** | OCR text recognition | [echo840/OCRBench](https://huggingface.co/datasets/echo840/OCRBench) |
 
+### Agentic benchmark: [agentic/kimi-code-bench/](agentic/kimi-code-bench/)
+
+Beyond the static-answer benchmarks above, `agentic/kimi-code-bench/` runs the
+model as a real coding agent under [Harbor](https://github.com/laude-institute/harbor) +
+[Terminal-Bench-2](https://github.com/laude-institute/terminal-bench-2) +
+[kimi-cli](https://github.com/MoonshotAI/kimi-cli). It measures whether the model
+can **actually solve** end-to-end terminal tasks (fix a buggy git repo, optimize
+a SQL query, configure an nginx server, etc.), scored by deterministic
+per-task `test.sh` (reward 0/1).
+
+- `smoke` set: 15 CPU-friendly tasks, ~40-60 min
+- `extended` set: 89 tasks (superset), ~4-6 h
+
+See [`agentic/kimi-code-bench/README.md`](agentic/kimi-code-bench/README.md)
+for the standalone project, or jump to
+[`agentic/kimi-code-bench/docs/quickstart.md`](agentic/kimi-code-bench/docs/quickstart.md)
+for 5-minute team onboarding.
+
 ### Required Parameters
 
 | Benchmark | Mode | Temperature | TopP | Max Tokens | Epochs |

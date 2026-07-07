@@ -1,0 +1,21 @@
+{
+  "name": "kimi-k2.7-code",
+  "description": "Moonshot Kimi-K2.7-code, K-series coding-specialized model.",
+  "preserve_thinking": 1,
+  "recommended_smoke_concurrency": 8,
+  "recommended_extended_concurrency": 4,
+  "tracks": {
+    "official": {
+      "base_url": "https://api.ppio.com/openai/v1",
+      "api_key": "$PPIO_API_KEY",
+      "headers": {
+        "X-Fusion-Provider": "moonshot-openai"
+      },
+      "model_id": "moonshotai/kimi-k2.7-code",
+      "notes": "Via PPIO gateway. api.kimi.com/coding/v1 (Kimi Code) 使用 OAuth 15-min token, 不适合 batch smoke; PPIO 用长寿命 API key."
+    },
+    "self": {
+      "description": "Self-deployed vLLM. Provide --self-url --self-key --self-header via CLI. Requires vLLM-int commit >= 9c167bfa9 for empty tools=[] handling."
+    }
+  }
+}

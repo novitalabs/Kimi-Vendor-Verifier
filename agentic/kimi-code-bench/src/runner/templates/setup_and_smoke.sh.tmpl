@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+# Kimi Code Bench — auto-generated setup + smoke runner.
+# Rendered by kbench from src/runner/templates/setup_and_smoke.sh.tmpl
+#
+# DO NOT hand-edit; modify the template instead.
+
+set -euo pipefail
+
+# === Resolved at render time ===
+VLLM_BASE_URL="${BASE_URL}"
+VLLM_API_KEY="${API_KEY}"
+VLLM_INFER_ID="${INFER_ID}"
+VLLM_MODEL_ID="${MODEL}"
+HARBOR_MODEL_FULL="${HARBOR_MODEL}"
+HARBOR_VERSION="${HARBOR_VERSION}"
+KIMI_CLI_REF="${KIMI_CLI_REF}"
+WORKDIR="${REMOTE_WORKDIR}"
+KIMI_CLI_DIR="$$WORKDIR/kimi-cli"
+GH_PREFIX="${GH_PREFIX}"
+PYPI_INDEX="${PYPI_INDEX}"
+CONTAINER_PROXY="${CONTAINER_PROXY}"
+
+# Optional preserve-thinking switch (rendered constant; PRESERVE_THINKING env
+# at run time can still override).
+PRESERVE_THINKING="$${PRESERVE_THINKING:-${PRESERVE_THINKING}}"
+
+mkdir -p "$$WORKDIR"
+cd "$$WORKDIR"
+
+# Mark when this run started so we can isolate trials created during this run
+# from any leftover trials in $KIMI_CLI_DIR/jobs (which is persistent and
+# accumulates across runs).
+RUN_START_MARKER="$$WORKDIR/.run_start_marker"
+touch "$$RUN_START_MARKER"
+
+export UV_DEFAULT_INDEX="$$PYPI_INDEX"
+export UV_PYTHON_INSTALL_MIRROR="$${GH_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download"
+
+echo "=== Architecture & tools ==="
+uname -a
+docker version --format 'docker {{.Server.Version}} ({{.Server.Os}}/{{.Server.Arch}})'
+
+# === install uv (PyPI mirror) ===
+if ! command -v uv >/dev/null; then
+  echo "Installing uv via PyPI mirror..."
+  python3 -m pip install --user --quiet --index-url "$$PYPI_INDEX" uv
+fi
+export PATH="$$HOME/.local/bin:$$PATH"
+uv --version
+
+# === vLLM endpoint health (5-minute retry loop) ===
+# Skipped when OAuth mode is on: the static API_KEY rendered into this script
+# becomes stale within 15 min, but kbench probe (run-time) already validated
+# the endpoint, and the container's kimi-cli will refresh tokens by itself.
+echo
+echo "=== vLLM endpoint ==="
+if [ -n "$${KIMI_VENDOR_OAUTH_CREDS_B64:-}" ]; then
+  echo "OAuth mode — skipping health probe (kbench did probe at start)."
+else
+  deadline=$$(( $$(date +%s) + 300 ))
+  while :; do
+    if [ -n "$$VLLM_INFER_ID" ]; then
+      code=$$(curl -sS -o /tmp/vllm-probe.txt -w "%{http_code}" --max-time 15 \
+        "$$VLLM_BASE_URL/models" \
+        -H "X-Infer-ID: $$VLLM_INFER_ID" \
+        -H "Authorization: Bearer $$VLLM_API_KEY" || echo 000)
+    else
+      code=$$(curl -sS -o /tmp/vllm-probe.txt -w "%{http_code}" --max-time 15 \
+        "$$VLLM_BASE_URL/models" \
+        -H "Authorization: Bearer $$VLLM_API_KEY" || echo 000)
+    fi
+    if [ "$$code" = "200" ]; then
+      echo "vLLM 200, models:"
+      head -c 300 /tmp/vllm-probe.txt
+      echo
+      break
+    fi
+    echo "vLLM HTTP $$code, retrying... ($$(head -c 200 /tmp/vllm-probe.txt))"
+    if [ "$$(date +%s)" -ge "$$deadline" ]; then
+      echo "vLLM not healthy after 5 min, aborting." >&2
+      exit 1
+    fi
+    sleep 15
+  done
+fi
+
+# === clone kimi-cli (ghfast mirror) ===
+echo
+echo "=== Clone kimi-cli @ $$KIMI_CLI_REF ==="
+if [ ! -d "$$KIMI_CLI_DIR" ]; then
+  git clone "$${GH_PREFIX}https://github.com/MoonshotAI/kimi-cli" "$$KIMI_CLI_DIR"
+fi
+cd "$$KIMI_CLI_DIR"
+git fetch "$${GH_PREFIX}https://github.com/MoonshotAI/kimi-cli" "$$KIMI_CLI_REF" --depth 1 2>/dev/null || \
+  git fetch "$${GH_PREFIX}https://github.com/MoonshotAI/kimi-cli" main --depth 1
+git reset --hard "$$KIMI_CLI_REF" 2>/dev/null || git reset --hard FETCH_HEAD
+
+# === install LocalKimiCliVendor (rendered by kbench) ===
+# The vendor agent file is written next to this script by kbench; copy it in.
+cp "$$WORKDIR/local_kimi_cli_vendor_agent.py" \
+   "$$KIMI_CLI_DIR/tests_ai/accuracy_smoke/local_kimi_cli_vendor_agent.py"
+
+# === task list (rendered) ===
+cat > "$$KIMI_CLI_DIR/tests_ai/accuracy_smoke/terminal_bench_2_tasks_default.txt" <<'TASKEOF'
+${TASK_LIST}
+TASKEOF
+echo "task list ($$(wc -l < $$KIMI_CLI_DIR/tests_ai/accuracy_smoke/terminal_bench_2_tasks_default.txt) tasks):"
+cat "$$KIMI_CLI_DIR/tests_ai/accuracy_smoke/terminal_bench_2_tasks_default.txt"
+
+# === Harbor + Terminal-Bench-2 ===
+echo
+echo "=== prepare_env (with mirror) ==="
+GH_MIRROR_PREFIX="$$GH_PREFIX" HARBOR_VERSION="$$HARBOR_VERSION" \
+  bash tests_ai/accuracy_smoke/scripts/prepare_env.sh
+
+# === vendor smoke script ===
+VENDOR_SCRIPT="$$KIMI_CLI_DIR/tests_ai/accuracy_smoke/scripts/run_smoke_vendor.sh"
+cat > "$$VENDOR_SCRIPT" <<'SHEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+BASE_DIR="$$(cd "$$(dirname "$${BASH_SOURCE[0]}")/.." && pwd)"
+TASK_FILE="$${BASE_DIR}/terminal_bench_2_tasks_default.txt"
+BENCH_DIR="$${TERMINAL_BENCH_2_DIR:-$${BASE_DIR}/../terminal_bench_2_cache}"
+REPO_ROOT="$$(cd "$${BASE_DIR}/../.." && pwd)"
+WHEEL_DIR="$${KIMI_CLI_WHEEL_DIR:-$${REPO_ROOT}/dist/accuracy_smoke}"
+JOBS_ROOT="$${HARBOR_JOBS_DIR:-$${REPO_ROOT}/jobs}"
+MODEL="$${HARBOR_MODEL:-kimi/kimi-for-coding}"
+AGENT_IMPORT_PATH="tests_ai.accuracy_smoke.local_kimi_cli_vendor_agent:LocalKimiCliVendor"
+CONCURRENCY="$${KBENCH_CONCURRENCY:-1}"
+
+mkdir -p "$${WHEEL_DIR}"
+uv build --package kimi-cli --out-dir "$${WHEEL_DIR}" >/dev/null
+KIMI_CLI_WHEEL_PATH="$$(ls -t "$${WHEEL_DIR}"/*.whl | head -n 1)"
+echo "Wheel: $${KIMI_CLI_WHEEL_PATH}"
+
+mkdir -p "$${JOBS_ROOT}"
+TSV_DIR="$${BASE_DIR}/.tsv_parts_$$(date +%s)"
+mkdir -p "$${TSV_DIR}"
+SUMMARY_TSV="$${BASE_DIR}/vendor_smoke_rewards_$$(date +%Y%m%d_%H%M%S).tsv"
+echo -e "task\treward_mean\tn_errors\tjob_dir" > "$${SUMMARY_TSV}"
+
+# Pre-pull all task images sequentially to avoid concurrent docker.io TLS
+# stress. Terminal-Bench-2 prebuilt images live at alexgshaw/<task>:20251031
+# (the tag comes from harbor's docker-compose-prebuilt.yaml; we don't try to
+# parse compose YAML because task environment/ dirs only contain Dockerfile +
+# resources). If a pull fails here, harbor's later `up --wait` retries it.
+echo "=== Pre-pulling task images (sequential) ==="
+while IFS= read -r task || [ -n "$${task}" ]; do
+  [ -z "$${task}" ] && continue
+  task_dir="$${BENCH_DIR}/$${task}"
+  [ ! -d "$${task_dir}" ] && continue
+  img="alexgshaw/$${task}:20251031"
+  echo "  pull $${img}"
+  if ! docker pull "$${img}" >/dev/null 2>&1; then
+    echo "    WARN: pull $${img} failed (harbor will retry inside the trial)"
+  fi
+done < "$${TASK_FILE}" || true
+echo "  pre-pull phase complete"
+echo
+
+run_one_task() {
+  local task="$$1"
+  local task_dir="$${BENCH_DIR}/$${task}"
+  local task_jobs_dir="$${JOBS_ROOT}/$${task}"
+  local part_tsv="$${TSV_DIR}/$${task}.tsv"
+  mkdir -p "$${task_jobs_dir}"
+
+  # Per-task agent-timeout multiplier override (from config.TASK_TIMEOUT_OVERRIDES).
+  # Rendered as a bash case below; avoids the shell-quoting nightmare of
+  # passing a JSON literal through 'python3 -c "..."' inside a heredoc.
+  # Falls back to the global AGENT_TIMEOUT_MUL when no override matches.
+  local task_timeout_mul=${AGENT_TIMEOUT_MUL}
+  case "$${task}" in
+${TASK_TIMEOUT_CASES}
+  esac
+
+  echo "[$$(date '+%H:%M:%S')] >>> $${task} (timeout_mul=$${task_timeout_mul})"
+  KIMI_CLI_WHEEL_PATH="$${KIMI_CLI_WHEEL_PATH}" \
+  KIMI_BASE_URL="$${KIMI_BASE_URL}" \
+  KIMI_API_KEY="$${KIMI_API_KEY}" \
+  KIMI_VENDOR_BASE_URL="$${KIMI_BASE_URL}" \
+  KIMI_VENDOR_API_KEY="$${KIMI_API_KEY}" \
+  KIMI_VENDOR_INFER_ID="$${KIMI_VENDOR_INFER_ID:-}" \
+  KIMI_VENDOR_EXTRA_HEADERS_JSON="$${KIMI_VENDOR_EXTRA_HEADERS_JSON:-}" \
+  KIMI_MODEL_THINKING_KEEP="$${KIMI_MODEL_THINKING_KEEP:-}" \
+  KIMI_MODEL_CAPABILITIES="$${KIMI_MODEL_CAPABILITIES:-}" \
+  KIMI_VENDOR_OAUTH_CREDS_B64="$${KIMI_VENDOR_OAUTH_CREDS_B64:-}" \
+    harbor run -p "$${task_dir}" --jobs-dir "$${task_jobs_dir}" \
+      --agent-import-path "$${AGENT_IMPORT_PATH}" -m "$${MODEL}" --n-concurrent 1 \
+      --agent-setup-timeout-multiplier ${AGENT_SETUP_MUL} \
+      --agent-timeout-multiplier $${task_timeout_mul} \
+      > "$${task_jobs_dir}/harbor.log" 2>&1 || true
+
+  local job_dir
+  job_dir="$$(ls -td "$${task_jobs_dir}"/20* 2>/dev/null | head -n 1 || true)"
+  if [ -z "$${job_dir}" ]; then
+    echo -e "$${task}\t\t\t" > "$${part_tsv}"
+    echo "[$$(date '+%H:%M:%S')] <<< $${task}  (no job dir)"
+    return
+  fi
+  python3 - "$${task}" "$${job_dir}" "$${part_tsv}" <<'PYINNER'
+import json, pathlib, sys
+task, job_dir, tsv = sys.argv[1:4]
+data = json.loads((pathlib.Path(job_dir)/"result.json").read_text())
+evals = data.get("stats",{}).get("evals",{})
+if evals:
+    entry = next(iter(evals.values()))
+    m = (entry.get("metrics") or [{}])[0].get("mean")
+    n = entry.get("n_errors")
+else:
+    m, n = None, data.get("stats",{}).get("n_errors")
+with open(tsv,"w") as f:
+    f.write(f"{task}\t{m if m is not None else ''}\t{n if n is not None else ''}\t{job_dir}\n")
+PYINNER
+  local mean errors
+  read -r _ mean errors _ < "$${part_tsv}"
+  echo "[$$(date '+%H:%M:%S')] <<< $${task}  mean=$${mean} errors=$${errors}"
+}
+
+echo "=== Running $$(wc -l < $${TASK_FILE}) task(s) with CONCURRENCY=$${CONCURRENCY} ==="
+running=0
+pids=()
+while IFS= read -r task || [ -n "$${task}" ]; do
+  [ -z "$${task}" ] && continue
+  task_dir="$${BENCH_DIR}/$${task}"
+  [ ! -d "$${task_dir}" ] && { echo "skip: $${task_dir}"; continue; }
+
+  if [ "$${CONCURRENCY}" -le 1 ]; then
+    run_one_task "$${task}"
+  else
+    run_one_task "$${task}" &
+    pids+=($$!)
+    running=$$((running+1))
+    if [ "$${running}" -ge "$${CONCURRENCY}" ]; then
+      wait -n
+      running=$$((running-1))
+    fi
+  fi
+done < "$${TASK_FILE}"
+
+# Drain leftover background tasks.
+if [ "$${CONCURRENCY}" -gt 1 ]; then
+  wait
+fi
+
+# Stitch per-task TSVs into the final summary, preserving task-file order.
+while IFS= read -r task || [ -n "$${task}" ]; do
+  [ -z "$${task}" ] && continue
+  part="$${TSV_DIR}/$${task}.tsv"
+  [ -f "$${part}" ] && cat "$${part}" >> "$${SUMMARY_TSV}"
+done < "$${TASK_FILE}"
+
+echo
+cat "$${SUMMARY_TSV}"
+SHEOF
+chmod +x "$$VENDOR_SCRIPT"
+
+# === run ===
+echo
+echo "=== run_smoke_vendor (PRESERVE_THINKING=$$PRESERVE_THINKING) ==="
+if [ "$$PRESERVE_THINKING" = "1" ]; then
+  THINKING_CAPS="thinking"
+  THINKING_KEEP="all"
+else
+  THINKING_CAPS=""
+  THINKING_KEEP=""
+fi
+
+KIMI_BASE_URL="$$VLLM_BASE_URL" \
+KIMI_API_KEY="$$VLLM_API_KEY" \
+KIMI_VENDOR_INFER_ID="$$VLLM_INFER_ID" \
+KIMI_VENDOR_EXTRA_HEADERS_JSON='${EXTRA_HEADERS_JSON}' \
+KBENCH_CONCURRENCY="${CONCURRENCY}" \
+HARBOR_MODEL="$$HARBOR_MODEL_FULL" \
+TERMINAL_BENCH_2_DIR="$$KIMI_CLI_DIR/tests_ai/terminal_bench_2_cache" \
+KIMI_MODEL_CAPABILITIES="$$THINKING_CAPS" \
+KIMI_MODEL_THINKING_KEEP="$$THINKING_KEEP" \
+KIMI_VENDOR_OAUTH_CREDS_B64="$${KIMI_VENDOR_OAUTH_CREDS_B64:-}" \
+bash "$$VENDOR_SCRIPT"
+
+echo
+echo "=== latest TSV ==="
+ls -t "$$KIMI_CLI_DIR/tests_ai/accuracy_smoke/"vendor_smoke_rewards_*.tsv 2>/dev/null | head -1 | xargs -r cat
+
+# Mirror TSV + jobs into the workdir so kbench can archive cleanly.
+# CRITICAL: $KIMI_CLI_DIR/jobs accumulates trials from every prior run on this
+# host. Only copy directories created since this run started; otherwise the
+# archive will contain hundreds of stale trials and triage will treat them as
+# part of this run.
+#
+# Concurrency-aware layout: with CONCURRENCY>1 the vendor script writes to
+# $KIMI_CLI_DIR/jobs/<task>/<timestamp>__<trial>/ (one subdir per task to
+# avoid collisions). Legacy serial layout is $KIMI_CLI_DIR/jobs/<timestamp>__<trial>/
+# directly. Archive both shapes; flatten so the final layout under
+# $WORKDIR/jobs/ matches what triage expects.
+mkdir -p "$$WORKDIR/jobs"
+rm -rf "$$WORKDIR/jobs"/*  # belt and braces: ensure no leftovers from prior runs
+if [ -d "$$KIMI_CLI_DIR/jobs" ]; then
+  # Per-task subdirs (concurrent layout): jobs/<task>/<timestamp>__<trial>
+  find "$$KIMI_CLI_DIR/jobs" -mindepth 2 -maxdepth 2 -type d \
+    -name "20*__*" -newer "$$RUN_START_MARKER" -print0 |
+    xargs -0 -I{} cp -a {} "$$WORKDIR/jobs/" 2>/dev/null || true
+  # Top-level layout (serial legacy): jobs/<timestamp>__<trial>
+  find "$$KIMI_CLI_DIR/jobs" -mindepth 1 -maxdepth 1 -type d \
+    -name "20*__*" -newer "$$RUN_START_MARKER" -print0 |
+    xargs -0 -I{} cp -a {} "$$WORKDIR/jobs/" 2>/dev/null || true
+fi
+NEW_TRIAL_COUNT=$$(find "$$WORKDIR/jobs" -mindepth 1 -maxdepth 1 -type d | wc -l)
+echo "Archived $$NEW_TRIAL_COUNT trial(s) created during this run."
+
+# Copy the rewards.tsv we just generated (the newest .tsv mtime is this run's).
+LATEST_TSV=$$(ls -t "$$KIMI_CLI_DIR/tests_ai/accuracy_smoke/"vendor_smoke_rewards_*.tsv 2>/dev/null | head -1)
+if [ -n "$$LATEST_TSV" ]; then
+  cp "$$LATEST_TSV" "$$WORKDIR/rewards.tsv"
+  echo "rewards.tsv copied from $$LATEST_TSV"
+else
+  echo "WARN: no rewards TSV found" >&2
+fi
