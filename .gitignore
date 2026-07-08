@@ -27,3 +27,9 @@ agentic/kimi-code-bench/runs/*
 !agentic/kimi-code-bench/runs/baseline-*/
 agentic/kimi-code-bench/runs/*/remote.tar.gz
 agentic/kimi-code-bench/runs/*/jobs/
+
+# agentic/walle-validator: per-run report / log artifacts. Team members
+# publish their own results; the tree only tracks the out/ dir shell
+# via .gitkeep so the tool works on a fresh clone.
+agentic/walle-validator/out/*
+!agentic/walle-validator/out/.gitkeep
