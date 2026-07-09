@@ -131,7 +131,21 @@ def probe_endpoint(
     infer_id: str = "",
     model: str = "kimi-k26",
     extra_headers: dict[str, str] | None = None,
+    strict_mode: bool = True,
 ) -> ProbeResult:
+    """Probe endpoint capabilities.
+
+    strict_mode:
+      True  -> Kimi K2.7-code spec: `thinking.type=disabled` and
+               `keep=null` MUST return 400. Endpoints that return 200
+               fail the probe.
+      False -> Kimi K2.6 / lenient endpoints: 200 on those cases is
+               correct behavior. The probe still records the actual
+               HTTP code but scores 200 as passing.
+
+    Callers wire this from the preset: K2.7-code presets pass True;
+    K2.6 / opensource presets pass False. See run_probe / cmd_probe.
+    """
     base_url = base_url.rstrip("/")
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -179,17 +193,17 @@ def probe_endpoint(
     result.cases.append(CaseResult("thinking_enabled_keep_all", 200, code, None,
                                    notes="spec #2: top-level thinking field"))
 
-    # 4. thinking disabled (spec #3 expects 400 on K2.7)
+    # 4. thinking disabled (spec #3 expects 400 on K2.7-strict, 200 on lenient)
     code, _ = _post(chat_url, {
         "model": model,
         "messages": [{"role": "user", "content": "hi"}],
         "thinking": {"type": "disabled"},
         "max_tokens": 8,
     }, headers)
-    # Note: we record "actual" but flag both 400 (strict K2.7) and 200 (lenient/non-K2.7)
-    # as legitimate observations.
-    result.cases.append(CaseResult("thinking_disabled_rejected", 400, code, None,
-                                   notes="spec #3: 400 on K2.7; 200 = no strict mode"))
+    expected = 400 if strict_mode else 200
+    result.cases.append(CaseResult("thinking_disabled_rejected", expected, code, None,
+                                   notes=("spec #3: strict endpoints reject with 400; "
+                                          "lenient (K2.6-family) accept with 200")))
 
     # 5. keep=null
     code, _ = _post(chat_url, {
@@ -198,8 +212,9 @@ def probe_endpoint(
         "thinking": {"type": "enabled", "keep": None},
         "max_tokens": 8,
     }, headers)
-    result.cases.append(CaseResult("keep_null_rejected", 400, code, None,
-                                   notes="spec #3"))
+    result.cases.append(CaseResult("keep_null_rejected", expected, code, None,
+                                   notes=("spec #3: strict endpoints reject with 400; "
+                                          "lenient (K2.6-family) accept with 200")))
 
     # 6. interleaved thinking with missing reasoning
     # spec #6 in strict mode: 400; in warn mode (v2c): 200 + log

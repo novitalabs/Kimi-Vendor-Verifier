@@ -17,15 +17,19 @@ cd agentic/walle-validator
   --api-key "$PPIO_API_KEY" \
   --model "moonshotai/kimi-k2.6-agentic" \
   --header "X-Fusion-Provider:kimi-k26-agentic-guoji-b200" \
-  --think-mode kimi
+  --think-mode kimi \
+  --tag baseline               # optional: label this run
 
-# 结果在 out/ 下:
-#   tool-call-schema-report.json  完整结构化报告
-#   verify_tool_call_json_schema_result.log  每行一条 PASSED/FAILED
+# 每次 run 落到独立子目录，历史保留:
+#   out/20260708T070205Z_moonshotai_kimi-k2.6-agentic_baseline/
+#       tool-call-schema-report.json         完整结构化报告
+#       verify_tool_call_json_schema_result.log  每行一条 PASSED/FAILED
+#   out/latest -> <最新一次 run 目录>         (符号链接, 方便脚本引用)
 ```
 
 - 单次 408 requests (204 case × 2 mode)，~5-15 分钟
 - 无需 mitm proxy / 无需 kimi CLI，任何 OpenAI-compatible endpoint 都能测
+- **多次 run 不会互相覆盖** —— 每次落一个新目录，跨时间对比 / 定位回归都能直接 diff
 
 ## 这是什么测试
 
@@ -38,9 +42,8 @@ Kimi 官方 (Moonshot) 在验证一个厂商能否成为 kimi-for-coding 的 ven
 
 ## 数据来源
 
-- **`testdata/kimi_official_cases.jsonl`** — Kimi 官方测试**实际发送**的 204 个 `tools[0].function.parameters` wire body。从一次真实的 Kimi 官方测试报告直接提取（见 `/Users/f/Documents/artifacts (22)/tool-call-schema-report.json`），逐字节保留。**这是运行时唯一的数据源**。
-- **`testdata/validator_cases/`** — MoonshotAI/walle upstream 的 213 个 raw JSON schema case (16 suites)。作 provenance/参考用，runtime 不读。想更新可 `cd /tmp && git clone --depth 1 https://github.com/MoonshotAI/walle && cp -r walle/testdata/validator_cases/* <this>/testdata/validator_cases/`。
-- **`testdata/selection_reasons.jsonl`** — audit trail: 204 个 case 从 213 里的 tool-callable 子集（9 个因特殊字符/超长 enum/深度递归 ref 不适合让模型现场生成 arguments 被排除）。同 `kimi_official_cases.jsonl` 冗余，保留供审查。
+- **`testdata/kimi_official_cases.jsonl`** — Kimi 官方测试**实际发送**的 204 个 wire body。每行 `{suite, line, selection_reason, schema}`：`schema` 是逐字节从一次真实 Kimi 官方测试报告（`/Users/f/Documents/artifacts (22)/tool-call-schema-report.json`）里 `selected_cases[i].schema` 提取来的 `tools[0].function.parameters`；`selection_reason` 记录 Kimi 官方为何选中这个 case（如 `object_parameter_schema` / `number_parameter_schema` 等 8 类）。**运行时唯一数据源，兼作 audit trail**。
+- **`testdata/validator_cases/`** — MoonshotAI/walle upstream 的 213 个 raw JSON schema case (16 suites)。作 provenance/参考用，runtime 不读。想更新可 `cd /tmp && git clone --depth 1 https://github.com/MoonshotAI/walle && cp -r walle/testdata/validator_cases/* <this>/testdata/validator_cases/`。204 是从 213 里挑出的 tool-callable 子集（9 个因特殊字符/超长 enum/深度递归 `$ref` 不适合让模型现场生成 arguments 被排除）。
 
 ## 结果解读
 
@@ -72,7 +75,9 @@ Kimi 官方 (Moonshot) 在验证一个厂商能否成为 kimi-for-coding 的 ven
 
 ```json
 {
-  "generated_at": "...",
+  "generated_at": "2026-07-08T07:02:05.123456+00:00",
+  "run_dir": "20260708T070205Z_moonshotai_kimi-k2.6-agentic_baseline",
+  "tag": "baseline",                       // 来自 --tag, 无则 null
   "model": "moonshotai/kimi-k2.6-agentic",
   "base_url": "https://api.ppio.com/openai/v1",
   "tool_name": "kvv_walle_case",
@@ -91,7 +96,8 @@ Kimi 官方 (Moonshot) 在验证一个厂商能否成为 kimi-for-coding 的 ven
 }
 ```
 
-跟 Kimi 官方内部 verifier 格式 1:1 一致，双方结果可直接 `diff`。
+- `results` 数组 + `selected_cases` 数组跟 Kimi 官方内部 verifier 格式 1:1 一致，双方结果可直接 `diff`（`run_dir`/`tag` 是本地扩展字段，官方 report 无此项）
+- **跨 run 对比**: `diff out/<run-A>/tool-call-schema-report.json out/<run-B>/tool-call-schema-report.json` 或用 `jq` 抽 `results[] | select(.status=="failed")` 逐 case 对齐
 
 ## 标准使用场景
 
@@ -143,7 +149,9 @@ Kimi 官方 (Moonshot) 在验证一个厂商能否成为 kimi-for-coding 的 ven
                             'opensource' -> {"chat_template_kwargs":{"thinking":false}}
                             'none' -> omit
 --dry-run                   Load cases + print planned requests, don't send
---out-dir DIR               Output dir (default ./out/)
+--out-dir DIR               Parent dir for per-run subdirs (default ./out/)
+--tag NAME                  Optional label appended to run dir name
+                            (e.g. 'baseline', 'after-fix-123')
 --timeout SEC               Per-request timeout (default 180)
 ```
 
@@ -158,14 +166,17 @@ Kimi 官方 (Moonshot) 在验证一个厂商能否成为 kimi-for-coding 的 ven
 
 ```
 walle-validator/
-├── verify_tool_call_schema.py       CLI + probe 编排 (stdlib only)
+├── verify_tool_call_schema.py                     CLI + probe 编排 (stdlib only)
 ├── testdata/
-│   ├── kimi_official_cases.jsonl    ← 运行时唯一数据源
-│   ├── selection_reasons.jsonl      audit trail
-│   └── validator_cases/             upstream walle testdata (provenance)
-├── out/                             per-run 产出 (gitignored 除 .gitkeep)
-├── README.md                        本文件
-└── AGENTS.md                        任务上下文，指向 quickstart
+│   ├── kimi_official_cases.jsonl                  ← 运行时唯一数据源 (204 wire bodies)
+│   └── validator_cases/                           upstream walle testdata (provenance)
+├── out/                                           per-run 产出 (gitignored 除 .gitkeep)
+│   ├── <UTC-stamp>_<model-slug>[_<tag>]/         每次 run 一个目录
+│   │   ├── tool-call-schema-report.json
+│   │   └── verify_tool_call_json_schema_result.log
+│   └── latest -> <最新 run 目录>                  符号链接
+├── README.md                                      本文件
+└── AGENTS.md                                      任务上下文，指向 quickstart
 ```
 
 ## 注意

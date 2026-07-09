@@ -77,37 +77,86 @@ def _test_endpoint(base_url: str, api_key: str, extra_headers: dict,
         return False, f"{type(e).__name__}: {e}"
 
 
+def _config_field(cli_val: str | None, env_var: str, default: str) -> str:
+    """Return CLI arg > env var > default. Empty string counts as unset."""
+    if cli_val:
+        return cli_val
+    env_val = os.environ.get(env_var, "")
+    if env_val:
+        return env_val
+    return default
+
+
 def cmd_init(args) -> int:
-    """Interactive setup: write ~/.kbench.json + test connections."""
+    """Set up ~/.kbench.json.
+
+    Two modes:
+    - **interactive** (default when stdin is a tty and --non-interactive is
+      not set): prompt the user for each field.
+    - **non-interactive** (--non-interactive, or auto-enabled when stdin is
+      not a tty, e.g. under CI / nohup / `< /dev/null`): read every value
+      from CLI flags and KBENCH_* env vars, then write. No prompts, no
+      overwrite confirmation. Missing SSH spec → exit 2 with a clear message
+      listing the flag / env var to set.
+    """
     print("=== Kimi Code Bench setup ===")
     print(f"Will write {USER_CONFIG_PATH}\n")
 
+    non_interactive = getattr(args, "non_interactive", False) or not sys.stdin.isatty()
+
     if USER_CONFIG_PATH.exists():
-        if not _yn(f"{USER_CONFIG_PATH} exists. Overwrite?", default=False):
+        if non_interactive:
+            print(f"[init] {USER_CONFIG_PATH} exists — overwriting "
+                  f"(non-interactive mode)")
+        elif not _yn(f"{USER_CONFIG_PATH} exists. Overwrite?", default=False):
             print("Aborted.")
             return 1
 
-    print("--- Remote test server ---")
-    print("This is where docker + harbor + trial containers run.")
-    ssh = _prompt("SSH spec (e.g. user@host or user@root@host@jump)", "")
-    if not ssh:
-        print("SSH spec is required. Aborted.")
-        return 2
-    port = int(_prompt("SSH port", "22"))
-    print("Workdir root: where per-run job data is written on the server.")
-    print("  ~/kbench      -> /home/<your-remote-user>/kbench (auto-isolated per user)")
-    print("  /root/kbench  -> shared root workdir (only OK if you're the only user)")
-    print("  $USER / {user} in the path expands to your LOCAL user name.")
-    workdir_root = _prompt("Workdir root on server", "~/kbench")
+    if non_interactive:
+        ssh = _config_field(getattr(args, "ssh_spec", None),
+                            "KBENCH_SSH_SPEC", "")
+        if not ssh:
+            print("[init] non-interactive mode but no SSH spec was given.")
+            print("       Set --ssh-spec <spec> or KBENCH_SSH_SPEC env var.")
+            print("       Example: --ssh-spec 'user@host' "
+                  "or 'alice@root@10.0.0.5@jump.example.com'")
+            return 2
+        port = int(_config_field(getattr(args, "ssh_port", None),
+                                 "KBENCH_SSH_PORT", "22"))
+        workdir_root = _config_field(getattr(args, "workdir_root", None),
+                                     "KBENCH_WORKDIR_ROOT", "~/kbench")
+        proxy = _config_field(getattr(args, "container_proxy", None),
+                              "KBENCH_CONTAINER_PROXY", "")
+        ppio = _config_field(getattr(args, "ppio_key", None),
+                             "KBENCH_PPIO_KEY", "")
+        print(f"[init] non-interactive:")
+        print(f"       ssh_user_host  = {ssh}")
+        print(f"       ssh_port       = {port}")
+        print(f"       workdir_root   = {workdir_root}")
+        print(f"       container_proxy= {proxy or '(none)'}")
+        print(f"       PPIO key       = {'(set)' if ppio else '(unset)'}")
+    else:
+        print("--- Remote test server ---")
+        print("This is where docker + harbor + trial containers run.")
+        ssh = _prompt("SSH spec (e.g. user@host or user@root@host@jump)", "")
+        if not ssh:
+            print("SSH spec is required. Aborted.")
+            return 2
+        port = int(_prompt("SSH port", "22"))
+        print("Workdir root: where per-run job data is written on the server.")
+        print("  ~/kbench      -> /home/<your-remote-user>/kbench (auto-isolated per user)")
+        print("  /root/kbench  -> shared root workdir (only OK if you're the only user)")
+        print("  $USER / {user} in the path expands to your LOCAL user name.")
+        workdir_root = _prompt("Workdir root on server", "~/kbench")
 
-    print("\n--- Container network ---")
-    print("If the server is behind a corporate proxy / in a region that needs")
-    print("a proxy for docker.io / archive.ubuntu.com, set the container proxy URL.")
-    print("Otherwise leave blank.")
-    proxy = _prompt("Container proxy URL", "")
+        print("\n--- Container network ---")
+        print("If the server is behind a corporate proxy / in a region that needs")
+        print("a proxy for docker.io / archive.ubuntu.com, set the container proxy URL.")
+        print("Otherwise leave blank.")
+        proxy = _prompt("Container proxy URL", "")
 
-    print("\n--- Optional: API keys ---")
-    ppio = _prompt("PPIO API key (for --preset --track official, Enter to skip)", "")
+        print("\n--- Optional: API keys ---")
+        ppio = _prompt("PPIO API key (for --preset --track official, Enter to skip)", "")
 
     cfg = {
         "remote": {
@@ -165,6 +214,14 @@ def cmd_doctor(args) -> int:
         print("  ✗ ssh (not on PATH)")
         all_ok = False
 
+    # Loading user config: missing is fine as long as src/config.py
+    # DEFAULT_REMOTE has enough to work with (team-fork default 4090 setup).
+    # Non-team users clone → DEFAULT_REMOTE is empty → they must run init.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from config import DEFAULT_REMOTE
+    from user_config import resolve_remote
+    default_has_ssh = bool(DEFAULT_REMOTE.get("ssh_user_host"))
+
     if USER_CONFIG_PATH.exists():
         try:
             cfg = json.loads(USER_CONFIG_PATH.read_text())
@@ -174,30 +231,34 @@ def cmd_doctor(args) -> int:
             all_ok = False
             cfg = {}
     else:
-        print(f"  ✗ {USER_CONFIG_PATH} missing (run: ./kbench init)")
-        all_ok = False
         cfg = {}
+        if default_has_ssh:
+            # DEFAULT_REMOTE has a canonical team server baked in — usable
+            # out of the box. Show as info so the user knows they can run
+            # init later to customize (own user account, own workdir, etc.).
+            print(f"  · {USER_CONFIG_PATH.name} missing — using src/config.py "
+                  f"DEFAULT_REMOTE (run ./kbench init to override)")
+        else:
+            print(f"  ✗ {USER_CONFIG_PATH} missing (run: ./kbench init)")
+            all_ok = False
 
-    # 2. Remote
+    # 2. Remote — always resolve via resolve_remote() so DEFAULT_REMOTE
+    # falls in when ~/.kbench.json is absent or partial.
     print("\nRemote SSH:")
-    remote = cfg.get("remote", {})
-    ssh = remote.get("ssh_user_host", "") if remote else ""
+    resolved = resolve_remote()
+    ssh = resolved.get("ssh_user_host", "")
     if not ssh:
-        print("  ✗ remote.ssh_user_host is empty in ~/.kbench.json")
+        print("  ✗ no ssh_user_host in ~/.kbench.json nor DEFAULT_REMOTE")
         print("    → run: ./kbench init")
         all_ok = False
     else:
-        port = int(remote.get("ssh_port", 22))
+        port = int(resolved.get("ssh_port", 22))
         ok, msg = _test_ssh(ssh, port)
         mark = "✔" if ok else "✗"
         print(f"  {mark} {ssh}:{port}  {msg}")
         if not ok:
             all_ok = False
         else:
-            # Use the resolver so ~ / $USER / {user} are expanded.
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from user_config import resolve_remote
-            resolved = resolve_remote()
             wd = resolved.get("workdir", "")
             # test parent so we can auto-mkdir the workdir itself
             wd_parent = wd.rsplit("/", 1)[0] if "/" in wd else wd
@@ -249,8 +310,11 @@ def cmd_doctor(args) -> int:
                     src = "literal"
                 print(f"  ✔ {name} (api_key: {src})")
             else:
-                print(f"  ✗ {name} api_key ref {key_ref!r} does not resolve")
-                all_ok = False
+                # Missing key only blocks `--track official`. Users running
+                # `--track self` (self-deployed vLLM) never touch this key,
+                # so surface as a warning rather than an error.
+                print(f"  ⚠ {name} api_key ref {key_ref!r} does not resolve "
+                      f"(only needed for --track official)")
         else:
             print(f"  · {name} (no official api_key ref)")
 

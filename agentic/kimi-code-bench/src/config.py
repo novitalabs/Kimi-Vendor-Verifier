@@ -11,15 +11,20 @@ KIMI_CLI_REF = "2c34efb"                     # MoonshotAI/kimi-cli @ kimi-cli 1.
 HARBOR_VERSION = "0.5.0"                      # laude-institute/harbor
 TERMINAL_BENCH_2_REF = "53ff2b87d621bdb97b455671f2bd9728b7d86c11"
 
-# Default remote sandbox — INTENTIONALLY EMPTY.
-# Team members configure their own test server via `./kbench init`, which
-# writes ~/.kbench.json. See docs/quickstart.md.
-# `./kbench doctor` will fail with a clear message if the config is missing.
+# Default remote sandbox: the novitalabs internal 4090 test box (shared by
+# the Kimi-Vendor-Verifier team). Team members can override any field via
+# ~/.kbench.json or CLI flags. Non-team users clone this repo and run
+# `./kbench init` to point at their own server.
+#
+# The 4090 sits behind jumpcg.ppio.cloud (novitalabs jump host). The SSH
+# spec uses OpenSSH's 4-segment ProxyJump form: <bastion-user>@<target-user>@
+# <target-host>@<bastion-host>. Your local ~/.ssh/config must have credentials
+# for `jumpcg.ppio.cloud` — ask a Kimi-Vendor-Verifier maintainer.
 DEFAULT_REMOTE = {
-    "ssh_user_host": "",
-    "ssh_port": 22,
-    "workdir": "",
-    "container_proxy": "",
+    "ssh_user_host": "gailun@root@10.121.196.3@jumpcg.ppio.cloud",
+    "ssh_port": 2222,
+    "workdir": "/root/kimi-code-bench",
+    "container_proxy": "http://172.17.0.1:1081",  # aidn-agent on 4090
 }
 
 # Default 15 smoke tasks (matches kimi-cli/tests_ai/accuracy_smoke/

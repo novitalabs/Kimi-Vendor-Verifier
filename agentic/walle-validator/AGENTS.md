@@ -33,7 +33,7 @@ cd agentic/walle-validator
 1. **`testdata/kimi_official_cases.jsonl`** — 从真实 Kimi-official 测试报告 (`artifacts (22)/tool-call-schema-report.json`) 提取的 204 个 wire body。运行时的**唯一**数据源。**不改这个文件**。
 2. **`testdata/validator_cases/`** — MoonshotAI/walle upstream jsonl (16 suites, 213 lines)。作 provenance 保留，runtime 不读。
 3. 每 case 用 `tool_name="kvv_walle_case"` 作 tool，`parameters=<case.schema>`，两个 mode 各发一次。
-4. 结果分类 (passed / failed-HTTP / failed-arguments-missing / failed-JSON-invalid) 写 `out/tool-call-schema-report.json` + `.log`。
+4. 结果分类 (passed / failed-HTTP / failed-arguments-missing / failed-JSON-invalid) 写 `out/<UTC-stamp>_<model-slug>[_<tag>]/tool-call-schema-report.json` + `.log`。**每次 run 落独立子目录，不覆盖历史**；`out/latest` 是指向最新一次 run 的符号链接。
 
 ## 结果解读的关键
 

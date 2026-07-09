@@ -126,7 +126,16 @@ def resolve_remote(cli_host: str | None = None,
     if user.get("workdir"):
         result["workdir"] = user["workdir"]
     elif user.get("workdir_root"):
-        result["workdir"] = f"{user['workdir_root'].rstrip('/')}/kimi-code-bench"
+        # workdir_root is a *parent* dir; we mount our project subdir under it.
+        # If the user already ended their workdir_root with "kimi-code-bench",
+        # don't add another layer (avoids surprises like
+        #   workdir_root=/root/kimi-code-bench
+        #   -> workdir=/root/kimi-code-bench/kimi-code-bench).
+        wr = user["workdir_root"].rstrip("/")
+        if wr.endswith("/kimi-code-bench") or wr.split("/")[-1] == "kimi-code-bench":
+            result["workdir"] = wr
+        else:
+            result["workdir"] = f"{wr}/kimi-code-bench"
     if user.get("container_proxy") is not None:
         # allow "" to explicitly disable proxy
         result["container_proxy"] = user["container_proxy"]

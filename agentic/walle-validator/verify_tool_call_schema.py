@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
 """walle-validator — server-side JSON schema (walle) conformance test.
 
-Loads MoonshotAI/walle testdata/validator_cases/*/valid.jsonl, filters to the
-tool-callable subset (see testdata/selection_reasons.jsonl), and for each case:
+Reads the 204 canonical wire bodies from testdata/kimi_official_cases.jsonl
+(extracted verbatim from a Kimi-official acceptance test report) and, for
+each case:
 
-  1. Wraps the schema as tools[0].function.parameters
+  1. Uses `case.schema` directly as tools[0].function.parameters
   2. Fires a /chat/completions request in both non-stream and stream mode
   3. Records whether the server accepted the schema, and whether the model
      actually produced a valid tool_call with well-formed JSON arguments
 
-Outputs (in --out-dir, default ./out/):
-  tool-call-schema-report.json       — full structured report, mirroring
-                                       the format used by novita's internal
-                                       verify tool
-  verify_tool_call_json_schema_result.log — per-line PASSED/FAILED lines
+The upstream walle jsonl files under testdata/validator_cases/ are kept in
+the tree for provenance / reference, but are NOT read at runtime.
+
+Outputs go under a per-run directory beneath --out-dir (default ./out/):
+  <out-dir>/<UTC-stamp>_<model-slug>[_<tag>]/
+      tool-call-schema-report.json       — full structured report, mirroring
+                                           the format used by Kimi's official
+                                           acceptance verifier
+      verify_tool_call_json_schema_result.log — per-line PASSED/FAILED lines
+  <out-dir>/latest -> <most-recent-run-dir>   (symlink, best-effort)
+
+Each run leaves a fresh directory so history is preserved and the team can
+diff runs / trace which cases regress.
 
 No mitm proxy, no kimi CLI. Works against any OpenAI-compatible endpoint.
 """
@@ -24,6 +33,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import socket
 import sys
 import urllib.error
@@ -51,6 +61,24 @@ def parse_header(s: str) -> tuple[str, str]:
         sys.exit(f"--header {s!r}: must be KEY:VALUE")
     k, v = s.split(":", 1)
     return k.strip(), v.lstrip()
+
+
+def slug(s: str, maxlen: int = 40) -> str:
+    """Reduce a free-form string to a filesystem-safe slug."""
+    s = re.sub(r"[^A-Za-z0-9._-]+", "-", s.strip()).strip("-._") or "run"
+    return s[:maxlen]
+
+
+def update_latest_symlink(out_root: Path, run_dir: Path) -> None:
+    """Point out_root/latest at run_dir. Best-effort: on filesystems without
+    symlink support we silently skip."""
+    link = out_root / "latest"
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(run_dir.name)
+    except OSError:
+        pass
 
 
 def load_cases(suites: list[str] | None) -> list[dict]:
@@ -211,10 +239,23 @@ def classify(status: int, body_text: str, mode: str) -> dict:
             body = json.loads(body_text)
         except json.JSONDecodeError:
             body = {}
-        err = body.get("error") or {}
+        # Vendors disagree about the shape of `error`. OpenAI / PPIO gateway
+        # send `{"error": {"type": ..., "message": ...}}`, but some vLLM-based
+        # deployments send `{"error": "some string"}` or omit it entirely.
+        # Coerce all of these into a stable row shape rather than crash.
+        err_raw = body.get("error") if isinstance(body, dict) else None
+        if isinstance(err_raw, dict):
+            err_type = err_raw.get("type")
+            err_msg = err_raw.get("message")
+        elif isinstance(err_raw, str):
+            err_type = None
+            err_msg = err_raw
+        else:
+            err_type = None
+            err_msg = None
         row["http_status"] = status
-        row["error_type"] = err.get("type") or "HTTPError"
-        row["message"] = err.get("message") or body_text[:400]
+        row["error_type"] = err_type or "HTTPError"
+        row["message"] = err_msg or body_text[:400]
         return row
 
     # 200: parse choices/message
@@ -269,7 +310,7 @@ def main() -> int:
                    help="Which response modes to test (default: both)")
     p.add_argument("--suites", nargs="+", default=None,
                    help="Restrict to specific suites (e.g. TestBasicTypes TestRequired). "
-                        "Default: all suites in selection_reasons.jsonl")
+                        "Default: all suites in kimi_official_cases.jsonl")
     p.add_argument("--thinking", action="store_true",
                    help="Enable thinking mode (default: off, aka non-thinking)")
     p.add_argument("--think-mode", default="none",
@@ -280,7 +321,14 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="Don't send requests; just print what would be sent")
     p.add_argument("--out-dir", default=str(ROOT / "out"),
-                   help="Directory for report artifacts (default: ./out/)")
+                   help="Parent directory for per-run report subdirs "
+                        "(default: ./out/). Each run writes to "
+                        "<out-dir>/<UTC-timestamp>_<model-slug>[_<tag>]/ so "
+                        "history is preserved.")
+    p.add_argument("--tag", default=None,
+                   help="Optional label appended to the run directory name "
+                        "(e.g. 'baseline', 'after-fix-123'). Alphanumerics, "
+                        "dot, dash, underscore only; other chars are folded.")
     p.add_argument("--timeout", type=int, default=180,
                    help="Per-request timeout in seconds (default 180)")
     args = p.parse_args()
@@ -306,9 +354,28 @@ def main() -> int:
     if not cases:
         sys.exit("[verify] no cases selected")
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    generated_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    out_root = Path(args.out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    now = dt.datetime.now(dt.timezone.utc)
+    generated_at = now.isoformat()
+    # Timestamp is UTC compact-ISO so that lexicographic sort = chronological.
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    model_slug = slug(args.model.replace("/", "_"))
+    parts = [stamp, model_slug]
+    if args.tag:
+        parts.append(slug(args.tag))
+    if args.dry_run:
+        parts.append("dryrun")
+    run_dir = out_root / "_".join(parts)
+    # If someone manages to fire two runs in the same second, disambiguate
+    # rather than overwrite the earlier one.
+    if run_dir.exists():
+        n = 2
+        while (out_root / f"{'_'.join(parts)}-{n}").exists():
+            n += 1
+        run_dir = out_root / f"{'_'.join(parts)}-{n}"
+    run_dir.mkdir(parents=True)
 
     from collections import Counter
     reasons = Counter(c["selection_reason"] for c in cases)
@@ -324,76 +391,95 @@ def main() -> int:
 
     log_lines: list[str] = []
     results: list[dict] = []
+    report_path = run_dir / "tool-call-schema-report.json"
+    log_path = run_dir / "verify_tool_call_json_schema_result.log"
 
-    for case in cases:
-        for mode in args.modes:
-            body = build_body(case, args.model,
-                              stream=(mode == "stream"),
-                              thinking=args.thinking,
-                              think_mode=args.think_mode)
-            if args.dry_run:
-                row = {"status": "passed", "message": "dry-run", "mode": mode,
-                       "http_status": None, "error_type": None, "arguments": ""}
-            else:
-                status, body_text = post(url, headers, body, args.timeout)
-                row = classify(status, body_text, mode)
-            full_row = {
-                "suite": case["suite"],
-                "line": case["line"],
-                "selection_reason": case["selection_reason"],
-                **row,
-            }
-            results.append(full_row)
-            marker = "[PASSED]" if row["status"] == "passed" else "[FAILED]"
-            trailer = ""
-            if row["status"] == "failed":
-                trailer = f" - {row['message']}"
-            line = (f"{marker} [{mode}] {case['suite']}/valid.jsonl:{case['line']} "
-                    f"({case['selection_reason']}){trailer}")
-            print(line)
-            log_lines.append(line)
+    def flush_report(*, aborted: str | None = None) -> None:
+        """Write current results + summary to disk. Safe to call from any
+        exit path (normal, KeyboardInterrupt, exception) — partial results
+        are still useful for triage."""
+        summary = {
+            "total": len(results),
+            "by_status": dict(Counter(r["status"] for r in results)),
+            "by_selection_reason": dict(Counter(r["selection_reason"] for r in results)),
+            "by_mode": {},
+        }
+        for m in args.modes:
+            sub = [r for r in results if r["mode"] == m]
+            summary["by_mode"][m] = dict(Counter(r["status"] for r in sub))
 
-    summary = {
-        "total": len(results),
-        "by_status": dict(Counter(r["status"] for r in results)),
-        # by_selection_reason counts per result (case × mode), matching
-        # novita's internal verifier: each of the 204 selected cases
-        # contributes twice (non-stream + stream).
-        "by_selection_reason": dict(Counter(r["selection_reason"] for r in results)),
-        "by_mode": {},
-    }
-    for m in args.modes:
-        sub = [r for r in results if r["mode"] == m]
-        summary["by_mode"][m] = dict(Counter(r["status"] for r in sub))
+        report = {
+            "generated_at": generated_at,
+            "run_dir": run_dir.name,
+            "tag": args.tag,
+            "aborted": aborted,     # None on clean finish; otherwise a short reason
+            "model": args.model,
+            "base_url": args.base_url,
+            "tool_name": TOOL_NAME,
+            "dry_run": args.dry_run,
+            "thinking": args.thinking,
+            "think_mode": args.think_mode,
+            "modes": list(args.modes),
+            "selected_cases": [{
+                "suite": c["suite"],
+                "line": c["line"],
+                "selection_reason": c["selection_reason"],
+                "schema": c["schema"],
+            } for c in cases],
+            "summary": summary,
+            "results": results,
+        }
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+        log_path.write_text("\n".join(log_lines) + "\n")
+        update_latest_symlink(out_root, run_dir)
 
-    report = {
-        "generated_at": generated_at,
-        "model": args.model,
-        "base_url": args.base_url,
-        "tool_name": TOOL_NAME,
-        "dry_run": args.dry_run,
-        "thinking": args.thinking,
-        "think_mode": args.think_mode,
-        "modes": list(args.modes),
-        "selected_cases": [{
-            "suite": c["suite"],
-            "line": c["line"],
-            "selection_reason": c["selection_reason"],
-            "schema": c["schema"],
-        } for c in cases],
-        "summary": summary,
-        "results": results,
-    }
-    report_path = out_dir / "tool-call-schema-report.json"
-    log_path = out_dir / "verify_tool_call_json_schema_result.log"
-    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    log_path.write_text("\n".join(log_lines) + "\n")
+    aborted_reason: str | None = None
+    try:
+        for case in cases:
+            for mode in args.modes:
+                body = build_body(case, args.model,
+                                  stream=(mode == "stream"),
+                                  thinking=args.thinking,
+                                  think_mode=args.think_mode)
+                if args.dry_run:
+                    row = {"status": "passed", "message": "dry-run", "mode": mode,
+                           "http_status": None, "error_type": None, "arguments": ""}
+                else:
+                    status, body_text = post(url, headers, body, args.timeout)
+                    row = classify(status, body_text, mode)
+                full_row = {
+                    "suite": case["suite"],
+                    "line": case["line"],
+                    "selection_reason": case["selection_reason"],
+                    **row,
+                }
+                results.append(full_row)
+                marker = "[PASSED]" if row["status"] == "passed" else "[FAILED]"
+                trailer = ""
+                if row["status"] == "failed":
+                    trailer = f" - {row['message']}"
+                line = (f"{marker} [{mode}] {case['suite']}/valid.jsonl:{case['line']} "
+                        f"({case['selection_reason']}){trailer}")
+                print(line)
+                log_lines.append(line)
+    except KeyboardInterrupt:
+        aborted_reason = f"KeyboardInterrupt after {len(results)}/{len(cases)*len(args.modes)} results"
+        print(f"\n[verify] interrupted; flushing {len(results)} partial results to disk")
+    except Exception as e:
+        aborted_reason = f"{type(e).__name__}: {e}"
+        print(f"\n[verify] crashed ({aborted_reason}); flushing {len(results)} partial results")
+    finally:
+        flush_report(aborted=aborted_reason)
 
     print()
-    print(f"Report: {report_path}")
-    print(f"Log:    {log_path}")
-    print(f"Summary: {summary['by_status']}")
-    return 0
+    print(f"Run dir: {run_dir}")
+    print(f"Report:  {report_path}")
+    print(f"Log:     {log_path}")
+    print(f"Latest:  {out_root / 'latest'} -> {run_dir.name}")
+    print(f"Summary: {dict(Counter(r['status'] for r in results))}")
+    if aborted_reason:
+        print(f"Aborted: {aborted_reason}")
+    return 0 if aborted_reason is None else 2
 
 
 if __name__ == "__main__":

@@ -20,11 +20,15 @@ from triage_trial import triage
 
 BUCKET_DESC = {
     "PASS": "✓ 通过",
+    "V": "vendor/endpoint 稳定性 (backend 挂 / inference_id 失效 / 502/503/504) — 非模型/协议问题, 联系 vendor",
     "A": "vLLM tool-call 协议错 (parser / schema / streaming)",
     "B": "vLLM 推理质量 (sampler / prefix cache / max_tokens / 训练分布)",
     "C": "agent 框架限制 (max_steps / timeout / context 管理)",
     "D": "模型能力天花板 (训练侧标记上报)",
 }
+# Bucket enumeration order — V comes first after PASS so vendor issues jump
+# out in the TRIAGE.md summary table.
+BUCKET_ORDER = ["PASS", "V", "A", "B", "C", "D"]
 
 
 def main(run_dir):
@@ -73,13 +77,38 @@ def main(run_dir):
     md.append("")
     md.append("| Bucket | Count | Description |")
     md.append("|---|---|---|")
-    for k in ["PASS", "A", "B", "C", "D"]:
+    for k in BUCKET_ORDER:
         n = len(by_bucket.get(k, []))
         md.append(f"| **{k}** | {n} | {BUCKET_DESC[k]} |")
     md.append("")
 
+    # Runaway alert: trials that burned way more resources than expected
+    # (agent framework has no max_steps; a looping model can burn 20M+
+    # tokens before phase-timeout kicks in). Surface these loudly so users
+    # don't silently pay for wasted trials.
+    runaways = [r for r in results if r.get("runaway")]
+    if runaways:
+        md.append("## ⚠ Runaway trials")
+        md.append("")
+        md.append("These trials ran far past the typical envelope for a "
+                  "well-behaved smoke trial (>=200 steps, or >=5M input "
+                  "tokens, or >=1500s agent_execution). Usually indicates "
+                  "the model looped without progress. If this recurs on the "
+                  "same task, lower --concurrency, shorten the prompt, or "
+                  "cap kimi-cli's max_steps.")
+        md.append("")
+        md.append("| Task | Steps | Input tokens | agent_exec (s) | Bucket |")
+        md.append("|---|---:|---:|---:|---|")
+        for r in runaways:
+            md.append(
+                f"| {r['task']} | {r['steps']} | "
+                f"{r['n_input_tokens']:,} | {r['phase_agent_exec_s']} | "
+                f"{r['bucket']} |"
+            )
+        md.append("")
+
     # 每桶 detail
-    for bucket in ["PASS", "A", "B", "C", "D"]:
+    for bucket in BUCKET_ORDER:
         items = by_bucket.get(bucket)
         if not items:
             continue

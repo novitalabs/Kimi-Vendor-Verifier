@@ -187,8 +187,11 @@ def run_bench(args) -> int:
                 )
             except Exception:
                 pass
-        probe_result = probe_endpoint(args.base_url, probe_key, args.infer_id,
-                                      args.model, extra_headers)
+        probe_result = probe_endpoint(
+            args.base_url, probe_key, args.infer_id,
+            args.model, extra_headers,
+            strict_mode=getattr(args, "strict_thinking_spec", False),
+        )
         (run_dir / "probe.json").write_text(json.dumps({
             "base_url": probe_result.base_url,
             "models_listed": probe_result.models_listed,
@@ -374,13 +377,43 @@ def _archive_and_triage(remote: dict, tag: str, run_dir: Path) -> None:
     print(f"\n=== Done. Run archived at: {run_dir} ===")
 
 
+def _workdir_from_snapshot(tag: str | None) -> str | None:
+    """Return `remote_workdir` recorded in runs/<tag>/config.snapshot.json.
+
+    Detach runs write the exact remote workdir they used into their local
+    snapshot. tail/fetch (which take a tag but no CLI --remote-workdir by
+    default) should honor that instead of re-deriving from ~/.kbench.json,
+    which yields a stale workdir when the run used --remote-workdir/<tag>.
+    """
+    if not tag:
+        return None
+    snap = RUNS / tag / "config.snapshot.json"
+    if not snap.exists():
+        return None
+    try:
+        data = json.loads(snap.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    wd = data.get("remote_workdir")
+    return wd if wd else None
+
+
 def _resolve_remote(args) -> dict:
-    """Resolve remote config: CLI > env > ~/.kbench.json > src/config DEFAULT_REMOTE."""
+    """Resolve remote config: CLI > env > ~/.kbench.json > src/config DEFAULT_REMOTE.
+
+    When called from tail/fetch with a --tag but no --remote-workdir, prefer
+    the workdir the detach run actually used (recorded in the run's
+    config.snapshot.json). This makes `kbench tail <tag>` and
+    `kbench fetch <tag>` work out of the box after a `run --detach`.
+    """
     from user_config import resolve_remote
+    cli_workdir = getattr(args, "remote_workdir", None)
+    if not cli_workdir:
+        cli_workdir = _workdir_from_snapshot(getattr(args, "tag", None))
     return resolve_remote(
         cli_host=getattr(args, "remote_host", None),
         cli_port=getattr(args, "remote_port", None),
-        cli_workdir=getattr(args, "remote_workdir", None),
+        cli_workdir=cli_workdir,
     )
 
 

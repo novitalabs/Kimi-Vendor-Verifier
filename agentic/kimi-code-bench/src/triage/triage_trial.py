@@ -155,13 +155,40 @@ def phase_seconds(d, key):
         return None
 
 
+# Signatures that indicate a *vendor-side* (endpoint/service) stability
+# failure — i.e. the model / agent framework / task itself is not at fault.
+# These belong in bucket V so users don't waste time debugging vLLM / prompt
+# / verifier when the real fix is "restart the vendor's backend".
+VENDOR_STABILITY_PATTERNS = (
+    "inference_id not found",   # PPIO / novita gateway routing dropped mid-run
+    "no available backend",     # 429 from vendor's load balancer
+    "upstream connect error",   # envoy / gateway upstream failure
+    "backend unhealthy",
+    "503 Service Unavailable",
+    "502 Bad Gateway",
+    "504 Gateway Time-out",
+)
+
+
+def _is_vendor_stability_error(exit_reason: str) -> bool:
+    if not exit_reason:
+        return False
+    return any(sig in exit_reason for sig in VENDOR_STABILITY_PATTERNS)
+
+
 def classify(signals):
-    """4-bucket 分类启发式. 见 vllm-agentic-strengthen-plan.md 2.2 节。
+    """5-bucket 分类启发式.
+    V: vendor/endpoint 稳定性问题 (backend 挂/inference_id 失效) — 不是模型/协议问题
     A: vLLM tool-call 协议错; B: vLLM 推理质量; C: agent 框架限制; D: 模型能力天花板
     通过的不分类, 返回 PASS。
+
+    V 桶优先级最高：只要 exit_reason 里出现 vendor stability signature 就归 V，
+    避免长跑中 endpoint 挂掉被误归 A/C 桶浪费 debug 精力。
     """
     if signals["reward"] == 1.0:
         return "PASS"
+    if _is_vendor_stability_error(signals.get("exit_reason", "")):
+        return "V"
     if signals["exception"]:
         # 异常退出 -> 大概率 C (timeout) 或基础设施
         et = signals["exception"]
@@ -223,6 +250,18 @@ def triage(trial_dir):
     # verifier
     verr = verifier_first_error(trial_dir / "verifier" / "test-stdout.txt")
 
+    # Runaway heuristic: trial burned way more than a well-behaved trial
+    # should. Terminal-Bench-2 smoke tasks that PASS typically use 10-50
+    # steps and 100k-1M input tokens. When kimi-cli / harbor have no hard
+    # cap, a model that loops on the same wrong plan can burn 20M+ tokens
+    # before agent_execution phase runs out of walltime. Flag those loudly
+    # so users don't waste money silently.
+    runaway = (
+        step_count >= 200
+        or n_input >= 5_000_000
+        or (agent_result.get("phase_seconds", {}).get("agent_execution", 0) or 0) >= 1500
+    )
+
     signals = {
         "task": task,
         "reward": reward,
@@ -240,6 +279,7 @@ def triage(trial_dir):
         "ctx_usage_last": ctx_usage_last,
         "exit_reason": exit_reason,
         "verifier_first_error": verr,
+        "runaway": runaway,
         "phase_env_setup_s": phase_seconds(result, "environment_setup"),
         "phase_agent_setup_s": phase_seconds(result, "agent_setup"),
         "phase_agent_exec_s": phase_seconds(result, "agent_execution"),

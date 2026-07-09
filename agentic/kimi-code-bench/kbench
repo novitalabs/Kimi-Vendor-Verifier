@@ -24,6 +24,19 @@ import argparse
 import sys
 from pathlib import Path
 
+# Line-buffer stdout so `kbench fetch | tail -80`, `kbench run | head -20`,
+# `nohup kbench ...` etc. produce visible progress in real time. Python's
+# default block-buffered stdout under non-tty caused fetch to appear hung
+# for tens of minutes despite steady progress. Best-effort: some sys.stdout
+# implementations (test harnesses) don't expose .reconfigure.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    # Some sys.stdout implementations (test harnesses, redirected pipes on
+    # older Pythons) don't expose .reconfigure; the block-buffer fallback is
+    # acceptable there.
+    pass
+
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -102,6 +115,9 @@ def _apply_preset(args) -> None:
     argv_has_pt = any(a.startswith("--preserve-thinking") for a in _sys.argv)
     if not argv_has_pt:
         args.preserve_thinking = resolved["preserve_thinking"]
+    # strict_thinking_spec follows the preset — probe uses it to decide
+    # whether K2.7 spec #3 cases expect 400 (strict) or 200 (lenient).
+    args.strict_thinking_spec = resolved.get("strict_thinking_spec", False)
 
 
 def cmd_install(args):
@@ -127,7 +143,9 @@ def cmd_probe(args):
     if not args.api_key:
         sys.exit("[kbench] probe requires --api-key or --preset (with api_key ref resolving to a value)")
     extra = _merged_headers(args)
-    spec_result = probe_endpoint(args.base_url, args.api_key, args.infer_id, args.model, extra)
+    strict = getattr(args, "strict_thinking_spec", False)
+    spec_result = probe_endpoint(args.base_url, args.api_key, args.infer_id, args.model, extra,
+                                 strict_mode=strict)
     print(spec_result.format())
     if args.extended:
         print()
@@ -178,7 +196,28 @@ def build_parser():
 
     # init
     p_init = sub.add_parser("init",
-                            help="Interactive setup: write ~/.kbench.json + test SSH + test API endpoint")
+                            help="Set up ~/.kbench.json (interactive by default; "
+                                 "--non-interactive for CI / automation)")
+    p_init.add_argument("--non-interactive", action="store_true",
+                        help="Skip all prompts. Read config from --ssh-spec / "
+                             "--ssh-port / --workdir-root / --container-proxy / "
+                             "--ppio-key CLI flags and KBENCH_* env vars. "
+                             "Auto-enabled when stdin is not a tty.")
+    p_init.add_argument("--ssh-spec", default=None,
+                        help="Remote SSH spec (e.g. 'user@host' or "
+                             "'alice@root@10.0.0.5@jump.example.com'). "
+                             "Falls back to $KBENCH_SSH_SPEC.")
+    p_init.add_argument("--ssh-port", default=None,
+                        help="Remote SSH port. Falls back to $KBENCH_SSH_PORT / 22.")
+    p_init.add_argument("--workdir-root", default=None,
+                        help="Remote workdir root (e.g. '~/kbench' or "
+                             "'/root/kbench'). Falls back to $KBENCH_WORKDIR_ROOT.")
+    p_init.add_argument("--container-proxy", default=None,
+                        help="http_proxy for docker.io/archive.ubuntu.com pulls. "
+                             "Falls back to $KBENCH_CONTAINER_PROXY.")
+    p_init.add_argument("--ppio-key", default=None,
+                        help="PPIO API key (only needed for --track official). "
+                             "Falls back to $KBENCH_PPIO_KEY.")
     p_init.set_defaults(func=cmd_init)
 
     # doctor

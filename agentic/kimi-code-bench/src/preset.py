@@ -58,7 +58,8 @@ def resolve_preset_track(preset: dict[str, Any], track: str,
     --self-model).
 
     Returns a dict with:
-        base_url, api_key, model, preserve_thinking, headers (dict)
+        base_url, api_key, model, preserve_thinking, strict_thinking_spec,
+        headers (dict)
     """
     from user_config import resolve_api_key
 
@@ -70,6 +71,10 @@ def resolve_preset_track(preset: dict[str, Any], track: str,
 
     result = {
         "preserve_thinking": preset.get("preserve_thinking", 0),
+        # strict_thinking_spec: does the endpoint enforce Kimi K2.7 spec #3
+        # (reject `thinking.type=disabled` and `keep=null` with 400)?
+        # K2.7-code presets set true; K2.6 / lenient presets default false.
+        "strict_thinking_spec": bool(preset.get("strict_thinking_spec", False)),
     }
     tcfg = preset["tracks"][track]
 

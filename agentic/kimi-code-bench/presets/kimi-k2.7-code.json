@@ -2,6 +2,7 @@
   "name": "kimi-k2.7-code",
   "description": "Moonshot Kimi-K2.7-code, K-series coding-specialized model.",
   "preserve_thinking": 1,
+  "strict_thinking_spec": true,
   "recommended_smoke_concurrency": 8,
   "recommended_extended_concurrency": 4,
   "tracks": {
