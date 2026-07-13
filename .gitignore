@@ -18,3 +18,25 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# agentic/kimi-code-bench: per-run artifacts (rewards.tsv, TRIAGE.md,
+# tarballs, jobs/, baseline snapshots) are local outputs — they belong on
+# the operator's machine, not in git. Track only the runs/ shell dir via
+# .gitkeep so a fresh clone has the directory ready.
+agentic/kimi-code-bench/runs/*
+!agentic/kimi-code-bench/runs/.gitkeep
+
+# agentic/walle-validator: same principle — per-run reports and canonical
+# baselines are local outputs; only keep the out/ shell dir via .gitkeep.
+agentic/walle-validator/out/*
+!agentic/walle-validator/out/.gitkeep
+
+# Python packaging build artifacts (egg-info, wheels)
+*.egg-info/
+build/
+dist/
+
+# macOS metadata / spotlight
+.metadata_never_index
+.Spotlight-V100
+.Trashes
