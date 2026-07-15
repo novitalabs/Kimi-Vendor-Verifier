@@ -9,12 +9,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
 from threading import Lock
 
+import requests
+
 
 def send_request(idx, api_url, body, headers):
     try:
-        req = Request(api_url, data=body, headers=headers)
-        resp = urlopen(req, timeout=300)
-        return idx, json.loads(resp.read()), None
+        ## The Request + urlopen might cause 403 Forbidden error in some case, use requests.post() instead
+        resp = requests.post(
+            f"{api_url}",
+            headers=headers,
+            json=body,
+            timeout=3600,
+        )
+        return idx, resp.json(), None
     except Exception as e:
         return idx, None, str(e)
 
@@ -134,6 +141,7 @@ def main():
 
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+        body = payload
         futures = {pool.submit(send_request, i, api_url, body, headers): i for i in range(args.total)}
         for fut in as_completed(futures):
             idx, data, err = fut.result()

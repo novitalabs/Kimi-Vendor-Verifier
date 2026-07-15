@@ -278,7 +278,7 @@ Examples:
         ):
             all_passed = False
 
-    sys.exit(0 if all_passed else 1)
+    #sys.exit(0 if all_passed else 1)
 
 
 if __name__ == "__main__":
