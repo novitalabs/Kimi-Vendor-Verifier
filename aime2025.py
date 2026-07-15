@@ -60,7 +60,7 @@ def aime2025_scorer() -> Scorer:
 
 
 @task
-def aime2025() -> Task:
+def aime2025(limit: Optional[int] = None) -> Task:
     return Task(
         dataset=hf_dataset(
             path=DATASET_PATH,
@@ -70,6 +70,7 @@ def aime2025() -> Task:
                 input=r["problem"],
                 target=str(r["answer"]),
             ),
+            limit=limit,
         ),
         solver=aime2025_solver(),
         scorer=aime2025_scorer(),

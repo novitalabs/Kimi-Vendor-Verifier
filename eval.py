@@ -55,6 +55,7 @@ def run_eval(
     temperature: float | None = None,
     top_p: float | None = None,
     extra_headers: dict[str, str] | None = None,
+    limit: int | None = None,
     **overrides,
 ):
     """Run a single benchmark evaluation."""
@@ -72,6 +73,7 @@ def run_eval(
     print(f"max_tokens={max_tokens}, max_connections={max_connections}, epochs={epochs}")
     print(f"temperature={temperature}, top_p={top_p}")
     print(f"stream={stream}, extra_body={extra_body}")
+    print(f"limit={limit if limit is not None else 'full dataset'}")
     print(f"{'='*60}\n")
 
     model_args = {
@@ -94,6 +96,7 @@ def run_eval(
         fail_on_error=True,
         temperature=temperature,
         top_p=top_p,
+        limit=limit,
         model_args=model_args,
     )
 
@@ -141,6 +144,12 @@ def main():
         "--epochs",
         type=int,
         help="Number of sampling epochs",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Limit dataset to first N samples (per epoch); omit = full dataset. "
+        "Applies to all benchmarks (ocrbench, mmmu, aime2025).",
     )
     parser.add_argument(
         "--client-timeout",
@@ -206,6 +215,7 @@ def main():
         args.temperature,
         args.top_p,
         extra_headers,
+        args.limit,
         **overrides,
     )
 
