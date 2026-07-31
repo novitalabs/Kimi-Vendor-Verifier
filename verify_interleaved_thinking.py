@@ -148,8 +148,13 @@ def run_verification(
     extra_headers: dict[str, str] | None = None,
     test_reject: bool = True,
     test_accept: bool = True,
-) -> bool:
-    """Run full verification. Returns True if all tests pass."""
+) -> tuple[bool, dict[str, int]]:
+    """Run full verification.
+
+    Returns (all_passed, stats), where stats holds per-group passed counts and
+    the overall total (number of individual checks run):
+        {"total", "passed_accept", "passed_reject"}
+    """
     client = get_client(base_url, api_key, extra_headers)
 
     print(f"\n{'='*60}")
@@ -160,12 +165,16 @@ def run_verification(
 
     all_passed = True
     results = []
+    passed_accept = 0
+    passed_reject = 0
 
     if test_accept:
         print("[1] Test request WITH reasoning_content (should be accepted)...")
         passed, msg = test_accepted_with_reasoning(client, model)
         results.append(passed)
-        if not passed:
+        if passed:
+            passed_accept += 1
+        else:
             all_passed = False
         print(f"    {msg}")
 
@@ -173,7 +182,9 @@ def run_verification(
         print("\n[2] Test request WITHOUT reasoning_content (should be rejected)...")
         passed, msg = test_rejected_without_reasoning(client, model)
         results.append(passed)
-        if not passed:
+        if passed:
+            passed_reject += 1
+        else:
             all_passed = False
         print(f"    {msg}")
 
@@ -183,7 +194,12 @@ def run_verification(
     print(f"Result: {status} ({passed_count}/{len(results)})")
     print(f"{'='*60}\n")
 
-    return all_passed
+    stats = {
+        "total": len(results),
+        "passed_accept": passed_accept,
+        "passed_reject": passed_reject,
+    }
+    return all_passed, stats
 
 
 def main():
@@ -224,6 +240,12 @@ Examples:
         action="store_true",
         help="Only test request with reasoning_content is accepted",
     )
+    parser.add_argument(
+        "--summary",
+        type=str,
+        default=None,
+        help="If set, write result stats as JSON to this file path.",
+    )
 
     args = parser.parse_args()
 
@@ -248,7 +270,7 @@ Examples:
     test_reject = not args.only_accept
     test_accept = not args.only_reject
 
-    all_passed = run_verification(
+    all_passed, stats = run_verification(
         args.base_url,
         args.api_key,
         args.model,
@@ -256,6 +278,12 @@ Examples:
         test_reject=test_reject,
         test_accept=test_accept,
     )
+
+    if args.summary:
+        summary = {"params.ilt": stats}
+        with open(args.summary, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        print(f"Summary written to: {args.summary}")
 
     #sys.exit(0 if all_passed else 1)
 

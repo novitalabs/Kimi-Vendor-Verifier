@@ -149,8 +149,13 @@ def run_verification(
     think_mode: str = "kimi",
     test_reject: bool = True,
     test_accept: bool = True,
-) -> bool:
-    """Run full verification. Returns True if all tests pass."""
+) -> tuple[bool, dict[str, int]]:
+    """Run full verification.
+
+    Returns (all_passed, stats), where stats holds per-group passed counts and
+    the overall total (number of individual checks run):
+        {"total", "passed_no_params", "passed_accept", "passed_reject"}
+    """
     client = get_client(base_url, api_key, extra_headers)
     mode_str = "think" if thinking else "non-think"
 
@@ -162,12 +167,17 @@ def run_verification(
 
     all_passed = True
     results = []
+    passed_no_params = 0
+    passed_accept = 0
+    passed_reject = 0
 
     # Test 1: no optional params
     print("[1] Test without optional params...")
     passed, msg = test_no_param(client, model, thinking, think_mode)
     results.append(passed)
-    if not passed:
+    if passed:
+        passed_no_params += 1
+    else:
         all_passed = False
     print(f"    {msg}")
 
@@ -177,7 +187,9 @@ def run_verification(
         for param in IMMUTABLE_PARAMS:
             for passed, msg in test_param_accepted(client, model, thinking, param, think_mode):
                 results.append(passed)
-                if not passed:
+                if passed:
+                    passed_accept += 1
+                else:
                     all_passed = False
                 print(f"    {msg}")
 
@@ -187,7 +199,9 @@ def run_verification(
         for param in IMMUTABLE_PARAMS:
             for passed, msg in test_param_rejected(client, model, thinking, param, think_mode):
                 results.append(passed)
-                if not passed:
+                if passed:
+                    passed_reject += 1
+                else:
                     all_passed = False
                 print(f"    {msg}")
 
@@ -198,7 +212,13 @@ def run_verification(
     print(f"Result: {status} ({passed_count}/{len(results)})")
     print(f"{'='*60}\n")
 
-    return all_passed
+    stats = {
+        "total": len(results),
+        "passed_no_params": passed_no_params,
+        "passed_accept": passed_accept,
+        "passed_reject": passed_reject,
+    }
+    return all_passed, stats
 
 
 def main():
@@ -239,6 +259,12 @@ Examples:
     parser.add_argument("--only-reject", action="store_true", help="Only test wrong values rejected")
     parser.add_argument("--only-accept", action="store_true", help="Only test correct values accepted")
     parser.add_argument("--all", action="store_true", help="Verify both thinking and non-thinking modes")
+    parser.add_argument(
+        "--summary",
+        type=str,
+        default=None,
+        help="If set, write per-mode result stats as JSON to this file path.",
+    )
 
     args = parser.parse_args()
 
@@ -265,8 +291,9 @@ Examples:
     modes = [False, True] if args.all else [args.thinking]
 
     all_passed = True
+    summary: dict[str, dict[str, int]] = {}
     for thinking in modes:
-        if not run_verification(
+        passed, stats = run_verification(
             args.base_url,
             args.api_key,
             args.model,
@@ -275,8 +302,16 @@ Examples:
             think_mode=args.think_mode,
             test_reject=test_reject,
             test_accept=test_accept,
-        ):
+        )
+        if not passed:
             all_passed = False
+        # thinking=True -> params.think; thinking=False -> params.no_think
+        summary["params.think" if thinking else "params.no_think"] = stats
+
+    if args.summary:
+        with open(args.summary, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        print(f"Summary written to: {args.summary}")
 
     #sys.exit(0 if all_passed else 1)
 

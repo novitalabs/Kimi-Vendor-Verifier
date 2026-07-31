@@ -84,7 +84,7 @@ def run_eval(
     if extra_headers:
         model_args["default_headers"] = extra_headers
 
-    eval(
+    return eval(
         [task],
         [model],
         max_tokens=max_tokens,
@@ -99,6 +99,31 @@ def run_eval(
         limit=limit,
         model_args=model_args,
     )
+
+
+def extract_scores(logs) -> dict:
+    """Flatten inspect_ai EvalLog list into {task: {total_samples,
+    completed_samples, scores}} where scores is {scorer_name: {metric: value}}.
+
+    Scorer and metric names are not hard-coded — they come from each task's
+    scorer(s), so we iterate rather than assume fixed keys.
+    """
+    out: dict = {}
+    for log in logs:
+        if getattr(log, "status", None) != "success" or not log.results:
+            continue
+        scores: dict = {}
+        for s in log.results.scores:
+            scores[s.name] = {
+                metric_name: metric.value
+                for metric_name, metric in s.metrics.items()
+            }
+        out[log.eval.task] = {
+            "total_samples": log.results.total_samples,
+            "completed_samples": log.results.completed_samples,
+            "scores": scores,
+        }
+    return out
 
 
 def main():
@@ -178,6 +203,12 @@ def main():
         default=None,
         help='Extra HTTP headers as a JSON object',
     )
+    parser.add_argument(
+        "--summary",
+        type=str,
+        default=None,
+        help="If set, write scorer results as JSON to this file path.",
+    )
 
     args = parser.parse_args()
 
@@ -204,7 +235,7 @@ def main():
             )
             sys.exit(1)
 
-    run_eval(
+    logs = run_eval(
         args.bench,
         args.model,
         args.max_tokens,
@@ -218,6 +249,11 @@ def main():
         args.limit,
         **overrides,
     )
+
+    if args.summary:
+        with open(args.summary, "w", encoding="utf-8") as f:
+            json.dump(extract_scores(logs), f, ensure_ascii=False, indent=2)
+        print(f"Summary written to: {args.summary}")
 
 
 if __name__ == "__main__":
