@@ -56,6 +56,7 @@ def run_eval(
     top_p: float | None = None,
     extra_headers: dict[str, str] | None = None,
     limit: int | None = None,
+    max_retries: int | None = None,
     **overrides,
 ):
     """Run a single benchmark evaluation."""
@@ -74,6 +75,7 @@ def run_eval(
     print(f"temperature={temperature}, top_p={top_p}")
     print(f"stream={stream}, extra_body={extra_body}")
     print(f"limit={limit if limit is not None else 'full dataset'}")
+    print(f"max_retries={max_retries if max_retries is not None else 'unlimited'}")
     print(f"{'='*60}\n")
 
     model_args = {
@@ -94,6 +96,11 @@ def run_eval(
         retry_on_error=3,
         continue_on_error=True,
         fail_on_error=True,
+        # Bound the per-request retry loop. Without this, max_retries stays None
+        # and inspect's retry stop is stop_never — so a transient connection
+        # error (KimiAPI.should_retry returns True for it) retries FOREVER,
+        # which looks like a hang. Cap it so a dead/flaky endpoint fails fast.
+        max_retries=max_retries,
         temperature=temperature,
         top_p=top_p,
         limit=limit,
@@ -183,6 +190,14 @@ def main():
         help="HTTP request timeout in seconds (default: 86400)",
     )
     parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Max per-request retries on transient errors before giving up. "
+        "Omit = unlimited (inspect default; a dead/flaky endpoint hangs forever). "
+        "Set a small value (e.g. 5) to fail fast instead of retrying indefinitely.",
+    )
+    parser.add_argument(
         "--stream",
         action="store_true",
         help="Enable streaming (keeps connection alive for long inference)",
@@ -247,6 +262,7 @@ def main():
         args.top_p,
         extra_headers,
         args.limit,
+        args.max_retries,
         **overrides,
     )
 
