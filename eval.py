@@ -8,6 +8,7 @@ from aime2025 import aime2025
 from mmmu_pro_vision import mmmu_pro_10c
 from ocr_bench import ocrbench
 
+
 import kimi_model  # noqa: F401 - registers kimi model API
 
 BENCHMARKS = {
@@ -18,18 +19,23 @@ BENCHMARKS = {
 
 # Default configs per benchmark (max_connections, epochs)
 BENCH_CONFIGS = {
-    "ocrbench": {"max_connections": 100, "epochs": 1},
-    "mmmu": {"max_connections": 100, "epochs": 1},
-    "aime2025": {"max_connections": 100, "epochs": 32},
+    "ocrbench": {"max_connections": 50, "epochs": 1},
+    "mmmu": {"max_connections": 50, "epochs": 1},
+    "aime2025": {"max_connections": 50, "epochs": 32},
 }
 
 
-def get_thinking_extra_body(thinking: bool, mode: str) -> dict:
+def get_thinking_extra_body(
+    thinking: bool,
+    mode: str,
+    thinking_effort: str | None = None,
+) -> dict:
     """Build extra_body for thinking mode based on backend type.
 
     Args:
         thinking: Enable thinking mode
         mode: Backend type - "kimi", "opensource", or "none" (no thinking param)
+        thinking_effort: Thinking effort to send when thinking is enabled
     """
     if mode == "none":
         # Non-hybrid model, no thinking param needed
@@ -37,11 +43,19 @@ def get_thinking_extra_body(thinking: bool, mode: str) -> dict:
     elif mode == "opensource":
         # Open-source inference frameworks (vLLM, SGLang, KTransformers, etc.)
         if thinking:
-            return {"chat_template_kwargs": {"thinking": True}}
+            chat_template_kwargs = {"thinking": True}
+            if thinking_effort:
+                chat_template_kwargs["preserve_thinking"] = True
+                chat_template_kwargs["thinking_effort"] = thinking_effort
+            return {"chat_template_kwargs": chat_template_kwargs}
         else:
             return {"chat_template_kwargs": {"thinking": False}}
     else:  # kimi
-        return {"thinking": {"type": "enabled" if thinking else "disabled"}}
+        thinking_body = {"type": "enabled" if thinking else "disabled"}
+        if thinking and thinking_effort:
+            thinking_body["keep"] = "all"
+            thinking_body["effort"] = thinking_effort
+        return {"thinking": thinking_body}
 
 
 def run_eval(
@@ -55,6 +69,7 @@ def run_eval(
     temperature: float | None = None,
     top_p: float | None = None,
     extra_headers: dict[str, str] | None = None,
+    thinking_effort: str | None = None,
     **overrides,
 ):
     """Run a single benchmark evaluation."""
@@ -64,13 +79,14 @@ def run_eval(
     max_connections = overrides.get("max_connections", config["max_connections"])
     epochs = overrides.get("epochs", config["epochs"])
 
-    extra_body = get_thinking_extra_body(thinking, think_mode)
+    extra_body = get_thinking_extra_body(thinking, think_mode, thinking_effort)
 
     print(f"\n{'='*60}")
     print(f"Running: {bench_name} | thinking={thinking} | mode={think_mode}")
     print(f"Model: {model}")
     print(f"max_tokens={max_tokens}, max_connections={max_connections}, epochs={epochs}")
     print(f"temperature={temperature}, top_p={top_p}")
+    print(f"thinking_effort={thinking_effort}")
     print(f"stream={stream}, extra_body={extra_body}")
     print(f"{'='*60}\n")
 
@@ -90,8 +106,8 @@ def run_eval(
         epochs=epochs,
         extra_body=extra_body,
         retry_on_error=3,
-        continue_on_error=True,
-        fail_on_error=True,
+        continue_on_fail=True,
+        fail_on_error=False,
         temperature=temperature,
         top_p=top_p,
         model_args=model_args,
@@ -169,7 +185,16 @@ def main():
         default=None,
         help='Extra HTTP headers as a JSON object',
     )
-
+    parser.add_argument(
+        "--thinking-effort",
+        type=str,
+        default=None,
+        help=(
+            "Kimi-style thinking effort, e.g. max. When set with "
+            "--thinking --think-mode kimi, sends thinking.keep=all and "
+            "thinking.effort=<value>."
+        ),
+    )
     args = parser.parse_args()
 
     overrides = {}
@@ -205,7 +230,8 @@ def main():
         args.stream,
         args.temperature,
         args.top_p,
-        extra_headers,
+        extra_headers=extra_headers,
+        thinking_effort=args.thinking_effort,
         **overrides,
     )
 

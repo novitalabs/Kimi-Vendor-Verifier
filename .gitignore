@@ -40,3 +40,10 @@ dist/
 .metadata_never_index
 .Spotlight-V100
 .Trashes
+
+# Generated reports
+real_verification_report.json
+
+# Temporary debug scripts
+retry_*.py
+show_*.py
