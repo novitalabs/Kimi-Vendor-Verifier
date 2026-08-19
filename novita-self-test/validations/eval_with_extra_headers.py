@@ -1,4 +1,6 @@
 import argparse
+import json
+import sys
 
 from inspect_ai import eval
 
@@ -66,6 +68,7 @@ def run_eval(
     stream: bool = False,
     temperature: float | None = None,
     top_p: float | None = None,
+    extra_headers: dict[str, str] | None = None,
     thinking_effort: str | None = None,
     **overrides,
 ):
@@ -87,6 +90,14 @@ def run_eval(
     print(f"stream={stream}, extra_body={extra_body}")
     print(f"{'='*60}\n")
 
+    model_args = {
+        "stream": stream,
+        "max_retries": 0,
+        "timeout": client_timeout,
+    }
+    if extra_headers:
+        model_args["default_headers"] = extra_headers
+
     eval(
         [task],
         [model],
@@ -99,11 +110,7 @@ def run_eval(
         fail_on_error=False,
         temperature=temperature,
         top_p=top_p,
-        model_args={
-            "stream": stream,
-            "max_retries": 0,
-            "timeout": client_timeout,
-        },
+        model_args=model_args,
     )
 
 
@@ -173,6 +180,12 @@ def main():
         help="Top-p sampling (default: 0.95)",
     )
     parser.add_argument(
+        "--extra-headers",
+        type=str,
+        default=None,
+        help='Extra HTTP headers as a JSON object',
+    )
+    parser.add_argument(
         "--thinking-effort",
         type=str,
         default=None,
@@ -190,6 +203,23 @@ def main():
     if args.epochs is not None:
         overrides["epochs"] = args.epochs
 
+    extra_headers = {}
+    if args.extra_headers:
+        try:
+            extra_headers = json.loads(args.extra_headers)
+        except json.JSONDecodeError as e:
+            print(f"Error: failed to parse --extra-headers JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(extra_headers, dict) or not all(
+            isinstance(k, str) and isinstance(v, str)
+            for k, v in extra_headers.items()
+        ):
+            print(
+                "Error: --extra-headers must be a JSON object with string keys and string values",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     run_eval(
         args.bench,
         args.model,
@@ -200,7 +230,8 @@ def main():
         args.stream,
         args.temperature,
         args.top_p,
-        args.thinking_effort,
+        extra_headers=extra_headers,
+        thinking_effort=args.thinking_effort,
         **overrides,
     )
 

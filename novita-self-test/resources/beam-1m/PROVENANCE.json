@@ -1,0 +1,32 @@
+{
+  "source": "https://github.com/mohammadtavakoli78/BEAM.git",
+  "source_commit": "3e12035532eb85768f1a7cd779832b650c4b2ef9",
+  "source_path": "chats/1M",
+  "converter": "/Users/f/Documents/Kimi-Vendor-Verifier/beam/prepare_data.py",
+  "counts": {
+    "chats": 35,
+    "messages": 74630,
+    "questions": 700,
+    "questions_per_chat": 20,
+    "question_types": 10,
+    "questions_per_type": 70
+  },
+  "files": {
+    "beam_1m_chats.jsonl.gz": {
+      "size": 35465655,
+      "sha256": "886288e0cafce9d47abae7a04fe09ee67642b50645c0724ccdd2763bdae9d3aa",
+      "uncompressed_size": 166316069,
+      "uncompressed_sha256": "d8afe1e676ec2b895ed368242e9ee227992ad1a4f8631ed1e5c60c8e46b7c0f0",
+      "lfs_pointer_size": 35465655,
+      "lfs_pointer_sha256": "878eefe2b90273b52ad1b0ddd29e72568a6b218567c0a8cdba78696099cba2ad",
+      "note": "Size and semantic source match; compressed SHA differs because gzip embeds generation metadata. The tracked LFS pointer was intentionally not replaced."
+    },
+    "beam_1m_questions.jsonl": {
+      "size": 652846,
+      "sha256": "0882ca1ea1dfffa4645463b94c44156277e4da082fb9a1a68ceeca852b4fc2f4",
+      "lfs_pointer_size": 652846,
+      "lfs_pointer_sha256": "0882ca1ea1dfffa4645463b94c44156277e4da082fb9a1a68ceeca852b4fc2f4",
+      "note": "Exact byte match with the tracked LFS object."
+    }
+  }
+}

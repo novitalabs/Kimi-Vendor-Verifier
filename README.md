@@ -21,44 +21,20 @@ thinking effort: max
 | Nebius | 0.878 | 0.814 | 0.2913 | 0.673 |
 | Modal | 0.887 | 0.817 | 0.322 | 0.658 |
 
-### Agentic benchmarks: [agentic/](agentic/)
+## Novita fork layout
 
-Beyond the static-answer benchmarks, `agentic/` measures whether the
-model can be used as a real coding agent. Two must-run tests:
+Moonshot-owned KVV files remain in their upstream paths. Novita-specific endpoint
+tests, Feishu fixtures, diagnostic helpers, and reference scripts live under
+[`novita-self-test/`](novita-self-test/README.md).
 
-#### [agentic/kimi-code-bench/](agentic/kimi-code-bench/)
+Kimi Code Bench is maintained separately at
+`/Users/f/Documents/novita-kimi-code-bench`. The K3 acceptance console, deepSWE
+adapter, row mapping, and evidence collector live at
+`/Users/f/Documents/ppio-workspace/tasks/kimi-k3-vendor-acceptance`.
 
-Runs the model as an end-to-end coding agent under
-[Harbor](https://github.com/laude-institute/harbor) +
-[Terminal-Bench-2](https://github.com/laude-institute/terminal-bench-2) +
-[kimi-cli](https://github.com/MoonshotAI/kimi-cli). Real terminal tasks
-(fix a buggy git repo, optimize a SQL query, configure an nginx server,
-etc.), reward 0/1 by deterministic per-task `test.sh`.
-
-- `smoke` set: 15 CPU-friendly tasks, ~40-60 min
-- `extended` set: 89 tasks (superset), ~4-6 h
-
-See [`agentic/kimi-code-bench/docs/quickstart.md`](agentic/kimi-code-bench/docs/quickstart.md)
-for 5-minute team onboarding.
-
-#### [agentic/walle-validator/](agentic/walle-validator/)
-
-Verifies the endpoint's **server-side JSON Schema validator**
-([MoonshotAI/walle](https://github.com/MoonshotAI/walle)) by replaying
-the 204-case tool-callable subset of walle's own `testdata/validator_cases/`
-against `/chat/completions`. For each case in each mode (non-stream +
-stream), records whether the server accepted the schema and whether the
-model produced a well-formed tool call with valid JSON arguments.
-
-408 requests (204 × 2 modes), ~5-15 min per model. Output format
-mirrors novita's internal verifier so results are directly comparable.
-
-```bash
-./verify_tool_call_schema.py \
-  --base-url $BASE --api-key $KEY --model $MODEL --think-mode kimi
-```
-
-See [`agentic/walle-validator/README.md`](agentic/walle-validator/README.md).
+The former `agentic/kimi-code-bench` and `agentic/walle-validator` copies were
+removed: Code Bench has a dedicated repository, and Walle validation is now the
+official `tests/tool_call_json_schema` suite.
 
 ## Overview
 
