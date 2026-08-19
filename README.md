@@ -23,18 +23,11 @@ thinking effort: max
 
 ## Novita fork layout
 
-Moonshot-owned KVV files remain in their upstream paths. Novita-specific endpoint
-tests, Feishu fixtures, diagnostic helpers, and reference scripts live under
-[`novita-self-test/`](novita-self-test/README.md).
-
-Kimi Code Bench is maintained separately at
-`/Users/f/Documents/novita-kimi-code-bench`. The K3 acceptance console, deepSWE
-adapter, row mapping, and evidence collector live at
-`/Users/f/Documents/ppio-workspace/tasks/kimi-k3-vendor-acceptance`.
-
-The former `agentic/kimi-code-bench` and `agentic/walle-validator` copies were
-removed: Code Bench has a dedicated repository, and Walle validation is now the
-official `tests/tool_call_json_schema` suite.
+Moonshot-owned KVV files remain in their upstream paths. Novita-specific tests,
+model profiles, orchestration, Code Bench, deepSWE adapters, and acceptance
+reporting live in the sibling `novita-self-test` repository in the
+`novita-kimi-vendor` workspace. This fork intentionally remains upstream source
+plus minimal fork metadata.
 
 ## Overview
 

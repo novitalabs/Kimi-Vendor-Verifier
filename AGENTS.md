@@ -2,11 +2,14 @@
 
 This is Novita's fork of `MoonshotAI/Kimi-Vendor-Verifier`.
 
+- Read sibling `../AGENTS.md` for workspace ownership and task routing.
 - Upstream-owned files stay in their original paths and are synced from Moonshot.
-- Novita-only tests, fixtures, helpers, and references live under `novita-self-test/`.
-- Do not add new Novita tests to upstream `tests/`, `beam/`, or top-level benchmark files.
-- Kimi Code Bench is owned by `/Users/f/Documents/novita-kimi-code-bench`.
-- deepSWE orchestration and acceptance reporting are owned by
-  `/Users/f/Documents/ppio-workspace/tasks/kimi-k3-vendor-acceptance`.
+- Keep this repository limited to upstream source plus minimal fork metadata and
+  deliberate upstream-sync commits.
+- Do not add Novita tests, profiles, orchestration, acceptance reporting, Code
+  Bench, or deepSWE adapters here. They are owned by sibling
+  `../novita-self-test/`.
+- Preserve `upstream/main` ancestry and the existing `origin`/`upstream` remotes.
+- Run the official 611-case collection gate after upstream or fixture changes.
 
-Read `novita-self-test/README.md` for the repository boundary and run commands.
+No dynamic endpoint, credential, or run evidence belongs in this repository.
