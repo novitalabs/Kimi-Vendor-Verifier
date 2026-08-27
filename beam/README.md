@@ -54,6 +54,17 @@ python beam_generate.py \
     --output answers.jsonl
 ```
 
+Kimi-K3 1M example (leave room for K3's per-message XTML markers):
+
+```bash
+python beam_generate.py \
+    --model your-kimi-k3-model-id \
+    --base-url https://your-endpoint/v1 \
+    --thinking-json '{"thinking":{"type":"enabled","keep":"all","effort":"max"}}' \
+    --max-context-tokens 1048064 \
+    --output answers.jsonl
+```
+
 ### Generation parameters
 
 | Parameter | Default | Description |
@@ -66,9 +77,10 @@ python beam_generate.py \
 | `--max-tokens` | 32768 | max output tokens |
 | `--thinking-json` | (empty) | extra request body JSON, e.g. thinking config |
 | `--tokenizer` | bundled Kimi-K2.6 | HF id / local path for truncation; empty = no truncation |
-| `--max-context-tokens` | 1048576 | content budget = max-context − max-tokens − 5000 |
+| `--max-context-tokens` | 1048576 | upper bound used to derive the raw-content budget: max-context − max-tokens − 5000 |
 | `--concurrency` | 16 | parallel requests |
-| `--max-retries` | 8 | per-question retries before recording empty answer |
+| `--timeout` | 3600 | timeout in seconds for each request attempt |
+| `--max-retries` | 8 | total attempts per question before recording an empty answer |
 | `--limit` | 0 (all) | only run the first N questions (smoke test) |
 | `--dry-run` | off | build prompts without sending requests |
 
@@ -82,9 +94,19 @@ Notes:
   bundled Kimi-K2.6 tokenizer (`tokenizer/`, extracted from the official
   model release) is used; point `--tokenizer` at another HF id / local path
   to match a different model family.
+- The truncation budget counts `message.content`; it does not render the target
+  model's chat template. Models with per-message structural markup therefore
+  need additional headroom. Kimi-K3 adds XTML markers for every message; for
+  the bundled 35-conversation / 700-question 1M dataset, use
+  `--max-context-tokens 1048064` with a 1048576-token K3 endpoint. This changes
+  only the generator's conservative truncation bound, not the endpoint's
+  configured context length or the benchmark dataset.
 - Restarting the script skips questions already present in the output file.
 - A question that fails all retries is written with an empty response and an
   `error` field (it scores 0) instead of aborting the run.
+- `--max-retries 8` means up to eight total attempts. With the default
+  3600-second timeout, one repeatedly timing-out question can take about eight
+  hours plus retry backoff before its error row is written.
 
 ## 2. Judge answers
 

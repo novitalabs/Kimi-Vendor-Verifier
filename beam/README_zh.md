@@ -44,6 +44,17 @@ python beam_generate.py \
     --output answers.jsonl
 ```
 
+Kimi-K3 1M 示例（为 K3 每条 message 的 XTML 标记预留空间）：
+
+```bash
+python beam_generate.py \
+    --model your-kimi-k3-model-id \
+    --base-url https://your-endpoint/v1 \
+    --thinking-json '{"thinking":{"type":"enabled","keep":"all","effort":"max"}}' \
+    --max-context-tokens 1048064 \
+    --output answers.jsonl
+```
+
 ### 生成参数
 
 | 参数 | 默认值 | 说明 |
@@ -56,9 +67,10 @@ python beam_generate.py \
 | `--max-tokens` | 32768 | 最大输出 token 数 |
 | `--thinking-json` | （空） | 额外请求 body JSON，例如 thinking 配置 |
 | `--tokenizer` | bundled Kimi-K2.6 | 用于截断的 HF id 或本地 tokenizer 路径；为空表示不截断 |
-| `--max-context-tokens` | 1048576 | 内容预算 = max-context - max-tokens - 5000 |
+| `--max-context-tokens` | 1048576 | 用于计算原始内容预算的上限：max-context - max-tokens - 5000 |
 | `--concurrency` | 16 | 并发请求数 |
-| `--max-retries` | 8 | 单个问题在记录空答案前的最大重试次数 |
+| `--timeout` | 3600 | 每次请求尝试的超时时间（秒） |
+| `--max-retries` | 8 | 单个问题在记录空答案前的总尝试次数 |
 | `--limit` | 0（全部） | 只运行前 N 个问题，用于 smoke test |
 | `--dry-run` | 关闭 | 只构造 prompts 并打印统计信息，不发送请求 |
 
@@ -66,8 +78,10 @@ python beam_generate.py \
 
 - Prompt 是扁平化后的完整对话历史（无 system prompt），末尾追加 probing question，并使用官方前缀 `NOTE: Only provide the answer without any explanations.`。
 - 当内容超过 token 预算时，截断会从开头删除完整 message，并尽量保持 user/assistant 成对结构。默认使用随仓库提供的 Kimi-K2.6 tokenizer（`tokenizer/`，从官方模型发布版本中提取）；也可以通过 `--tokenizer` 指向其他 HF id 或本地路径，以匹配不同模型系列。
+- 截断预算只统计 `message.content`，不会渲染目标模型的 chat template；因此使用 per-message 结构标记的模型需要额外余量。Kimi-K3 会为每条 message 增加 XTML 标记。对本目录固定的 35 段对话 / 700 个问题的 1M 数据集，如果 K3 endpoint 的上限为 1048576 token，应传入 `--max-context-tokens 1048064`。该参数只收紧生成器的保守截断边界，不修改 endpoint context 配置，也不修改 benchmark 数据集。
 - 脚本重启时会跳过输出文件中已经存在的问题。
 - 如果某个问题所有重试都失败，脚本会写入一个空 response 和 `error` 字段，而不是中止整个运行；该问题会得 0 分。
+- `--max-retries 8` 表示最多尝试 8 次。使用默认 3600 秒 timeout 时，一个持续超时的问题可能需要约 8 小时加退避时间，之后才会写入 error 行。
 
 ## 2. 判分答案
 

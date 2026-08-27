@@ -10,10 +10,9 @@ Immutable parameters (must use default values):
 """
 
 import argparse
-import json
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -25,32 +24,24 @@ class ParamSpec:
     name: str
     think_default: Any
     non_think_default: Any
-    wrong_values: list[Any]
-    extra_accepted_values: list[Any] = field(default_factory=list)
+    wrong_value: Any
 
 
 IMMUTABLE_PARAMS: list[ParamSpec] = [
-    ParamSpec("temperature", 1.0, 0.6, [-0.1, 1.1], [0.5]),
-    ParamSpec("top_p", 0.95, 0.95, [0.8]),
-    ParamSpec("presence_penalty", 0, 0, [0.5]),
-    ParamSpec("frequency_penalty", 0, 0, [0.5]),
-    ParamSpec("n", 1, 1, [2]),
+    ParamSpec("temperature", 1.0, 0.6, 0.5),
+    ParamSpec("top_p", 0.95, 0.95, 0.8),
+    ParamSpec("presence_penalty", 0, 0, 0.5),
+    ParamSpec("frequency_penalty", 0, 0, 0.5),
+    ParamSpec("n", 1, 1, 2),
 ]
 
 
-def get_client(
-    base_url: str,
-    api_key: str,
-    extra_headers: dict[str, str] | None = None,
-) -> OpenAI:
-    kwargs = {
-        "base_url": base_url,
-        "api_key": api_key,
-        "http_client": httpx.Client(timeout=60.0),
-    }
-    if extra_headers:
-        kwargs["default_headers"] = extra_headers
-    return OpenAI(**kwargs)
+def get_client(base_url: str, api_key: str) -> OpenAI:
+    return OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        http_client=httpx.Client(timeout=60.0),
+    )
 
 
 def get_thinking_extra_body(thinking: bool, think_mode: str) -> dict:
@@ -91,20 +82,16 @@ def test_param_rejected(
     thinking: bool,
     param: ParamSpec,
     think_mode: str = "kimi",
-) -> list[tuple[bool, str]]:
-    """Test that wrong param values are rejected. Returns one result per wrong value."""
+) -> tuple[bool, str]:
+    """Test that wrong param value is rejected."""
     default_value = param.think_default if thinking else param.non_think_default
-    results = []
-    for wrong_value in param.wrong_values:
-        if wrong_value == default_value:
-            results.append((True, f"Skip: {param.name}={wrong_value} == default_value"))
-            continue
-        success, _ = make_request(client, model, thinking, think_mode, {param.name: wrong_value})
-        if success:
-            results.append((False, f"❌ FAIL: {param.name}={wrong_value} should be rejected"))
-        else:
-            results.append((True, f"✓ PASS: {param.name}={wrong_value} correctly rejected"))
-    return results
+    if param.wrong_value == default_value:
+        return True, "Skip: wrong_value == default_value"
+
+    success, _ = make_request(client, model, thinking, think_mode, {param.name: param.wrong_value})
+    if success:
+        return False, f"❌ FAIL: {param.name}={param.wrong_value} should be rejected"
+    return True, f"✓ PASS: {param.name}={param.wrong_value} correctly rejected"
 
 
 def test_param_accepted(
@@ -113,18 +100,13 @@ def test_param_accepted(
     thinking: bool,
     param: ParamSpec,
     think_mode: str = "kimi",
-) -> list[tuple[bool, str]]:
-    """Test that correct param values are accepted. Returns one result per accepted value."""
+) -> tuple[bool, str]:
+    """Test that correct param value is accepted."""
     default_value = param.think_default if thinking else param.non_think_default
-    values = [default_value, *param.extra_accepted_values]
-    results = []
-    for value in values:
-        success, msg = make_request(client, model, thinking, think_mode, {param.name: value})
-        if success:
-            results.append((True, f"✓ PASS: {param.name}={value} accepted"))
-        else:
-            results.append((False, f"❌ FAIL: {param.name}={value} rejected: {msg}"))
-    return results
+    success, msg = make_request(client, model, thinking, think_mode, {param.name: default_value})
+    if success:
+        return True, f"✓ PASS: {param.name}={default_value} accepted"
+    return False, f"❌ FAIL: {param.name}={default_value} rejected: {msg}"
 
 
 def test_no_param(
@@ -145,13 +127,12 @@ def run_verification(
     api_key: str,
     model: str,
     thinking: bool,
-    extra_headers: dict[str, str] | None = None,
     think_mode: str = "kimi",
     test_reject: bool = True,
     test_accept: bool = True,
 ) -> bool:
     """Run full verification. Returns True if all tests pass."""
-    client = get_client(base_url, api_key, extra_headers)
+    client = get_client(base_url, api_key)
     mode_str = "think" if thinking else "non-think"
 
     print(f"\n{'='*60}")
@@ -175,21 +156,21 @@ def run_verification(
     if test_accept:
         print("\n[2] Test correct default values...")
         for param in IMMUTABLE_PARAMS:
-            for passed, msg in test_param_accepted(client, model, thinking, param, think_mode):
-                results.append(passed)
-                if not passed:
-                    all_passed = False
-                print(f"    {msg}")
+            passed, msg = test_param_accepted(client, model, thinking, param, think_mode)
+            results.append(passed)
+            if not passed:
+                all_passed = False
+            print(f"    {msg}")
 
     # Test 3: wrong values rejected
     if test_reject:
         print("\n[3] Test wrong values (should be rejected)...")
         for param in IMMUTABLE_PARAMS:
-            for passed, msg in test_param_rejected(client, model, thinking, param, think_mode):
-                results.append(passed)
-                if not passed:
-                    all_passed = False
-                print(f"    {msg}")
+            passed, msg = test_param_rejected(client, model, thinking, param, think_mode)
+            results.append(passed)
+            if not passed:
+                all_passed = False
+            print(f"    {msg}")
 
     # Summary
     print(f"\n{'='*60}")
@@ -223,12 +204,6 @@ Examples:
         default=os.environ.get("KIMI_API_KEY"),
         help="API key (default: $KIMI_API_KEY)",
     )
-    parser.add_argument(
-        "--extra-headers",
-        type=str,
-        default=None,
-        help='Extra HTTP headers as a JSON object.',
-    )
     parser.add_argument("--thinking", action="store_true", help="Verify thinking mode")
     parser.add_argument(
         "--think-mode",
@@ -246,20 +221,6 @@ Examples:
         print("Error: Set KIMI_API_KEY env var or use --api-key")
         sys.exit(1)
 
-    extra_headers = {}
-    if args.extra_headers:
-        try:
-            extra_headers = json.loads(args.extra_headers)
-        except json.JSONDecodeError as e:
-            print(f"Error: failed to parse --extra-headers JSON: {e}", file=sys.stderr)
-            sys.exit(1)
-        if not isinstance(extra_headers, dict) or not all(
-            isinstance(k, str) and isinstance(v, str)
-            for k, v in extra_headers.items()
-        ):
-            print("Error: --extra-headers must be a JSON object with string keys and string values", file=sys.stderr)
-            sys.exit(1)
-
     test_reject = not args.only_accept
     test_accept = not args.only_reject
     modes = [False, True] if args.all else [args.thinking]
@@ -271,7 +232,6 @@ Examples:
             args.api_key,
             args.model,
             thinking,
-            extra_headers=extra_headers,
             think_mode=args.think_mode,
             test_reject=test_reject,
             test_accept=test_accept,

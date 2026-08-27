@@ -13,11 +13,11 @@ thinking effort: max
 |----------|----------|-----------------|-----------|---------|
 | Moonshot | 0.89 | 0.82 | 0.31 | 0.675 |
 | Fireworks  | 0.89 | 0.82 | 0.3037 | 0.664 |
-| Baseten | 0.889 | 0.804 | 0.2975 | TBD |
+| Baseten | 0.889 | 0.804 | 0.3219 | 0.693 |
 | Together | 0.897 | 0.820 | 0.3160 | 0.678 |
 | DigitalOcean | 0.89 | 0.816 | TBD | TBD |
-| Inferact | 0.891 | 0.818 | TBD | TBD |
-| Nebius | 0.878 | 0.814 | TBD | TBD |
+| Inferact (vLLM ref.) | 0.891 | 0.818 | 0.3188 | 0.695 |
+| Nebius | 0.878 | 0.814 | 0.2913 | 0.673 |
 | Modal | 0.887 | 0.817 | 0.322 | 0.658 |
 
 
@@ -36,6 +36,18 @@ thinking effort: max
 | Pytest verifier | `tests/k3_features/` | K3 feature contract 校验，包括 dynamic tools、response_format、tool_choice、thinking effort |
 | Pytest verifier | `tests/prompt_tokens/` | 验证 vendor 上报的 `usage.prompt_tokens` 是否与期望常量一致 |
 | Agent benchmark | [DeepSWE](https://github.com/datacurve-ai/deep-swe) | 多步 tool 使用和 coding-agent 能力评测，使用 Pier 平台评测 |
+
+## Novita fork 目录边界
+
+Moonshot 官方 KVV 文件保留原路径，只通过 upstream 同步。Novita 自有的 endpoint
+测试、飞书附件、诊断工具和参考脚本统一放在 `novita-self-test/`。
+
+Kimi Code Bench 独立维护在 `/Users/f/Documents/novita-kimi-code-bench`；K3 验收
+入口、中控台、deepSWE adapter、验收行映射和证据 collector 位于
+`/Users/f/Documents/ppio-workspace/tasks/kimi-k3-vendor-acceptance`。
+
+旧的 `agentic/kimi-code-bench` 和 `agentic/walle-validator` 已删除：前者已有独立
+仓库，后者由官方 `tests/tool_call_json_schema` 覆盖。
 
 
 ## 环境准备
